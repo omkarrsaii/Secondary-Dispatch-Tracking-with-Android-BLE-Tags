@@ -1,0 +1,20 @@
+{
+  "name": "find-hub-tracker",
+  "version": "1.0.0",
+  "description": "Google Find Hub device location tracker",
+  "scripts": {
+    "install:all":       "cd backend && npm install && cd ../frontend && npm install && cd ../client-tracker && npm install",
+    "setup-login":       "cd backend && npm run setup-login",
+    "dev:backend":       "cd backend && npm run dev",
+    "dev:frontend":      "cd frontend && npm run dev",
+    "dev:client":        "cd client-tracker && npm run dev",
+    "build":             "cd frontend && npm run build && cd ../client-tracker && npm run build",
+    "build:admin":       "cd frontend && npm run build",
+    "build:client":      "cd client-tracker && npm run build",
+    "start":             "cd backend && npm start",
+    "docker:build":      "docker-compose build",
+    "docker:up":         "docker-compose up -d",
+    "docker:down":       "docker-compose down",
+    "docker:logs":       "docker-compose logs -f"
+  }
+}

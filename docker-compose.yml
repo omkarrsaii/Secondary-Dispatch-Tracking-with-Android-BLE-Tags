@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  find-hub:
+    build: .
+    container_name: find-hub-tracker
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/backend/data   # Chrome profile + SQLite DB + debug snapshots
+      - ./logs:/app/backend/logs
+    environment:
+      - PORT=5000
+      - FETCH_INTERVAL=10
+      - DATABASE_URL=./data/devices.db
+      - CHROME_PROFILE_DIR=./data/chrome-profile
+      - NOMINATIM_URL=https://nominatim.openstreetmap.org
+      - HEADLESS=true
+      - NODE_ENV=production
+      # Admin dashboard served at /         → http://localhost:5000
+      # Client tracker served  at /track/   → http://localhost:5000/track
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

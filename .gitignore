@@ -1,0 +1,10 @@
+node_modules/
+data/
+logs/
+*.db
+storageState.json
+.env
+frontend/dist/
+dist/
+*.log
+.DS_Store
