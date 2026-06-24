@@ -1,7 +1,41 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Building2, AlertCircle, Layers } from 'lucide-react'
+import { ChevronRight, ChevronDown, Building2, AlertCircle, Layers, FileText } from 'lucide-react'
 import Header from '../components/Header'
 import { getHierarchyTree, syncHierarchy, getDistributorDetail } from '../lib/api'
+
+// Sheet dates are DD.MM.YYYY (e.g. "12.02.2026" = 12th February). Native
+// `new Date()` misreads dot-separated dates as MM.DD.YYYY — parse the
+// day-month-year order explicitly instead. Kept in sync with the same
+// fix in the Distributor Portal's DistributorDashboard.jsx.
+function formatInvoiceDate(dateStr) {
+  if (!dateStr) return '—'
+  const str = String(dateStr).trim()
+  const match = str.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/)
+  if (match) {
+    const [, day, month, year] = match
+    const d = new Date(Number(year), Number(month) - 1, Number(day))
+    if (!isNaN(d.getTime())) {
+      return new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(d)
+    }
+  }
+  const d = new Date(str)
+  return isNaN(d.getTime()) ? str : new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(d)
+}
+
+function VehicleStatusPill({ status }) {
+  if (status === 'Assigned') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-hub-green/15 text-hub-green border border-hub-green/30">
+        🟢 Assigned
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-hub-border/40 text-hub-muted border border-hub-border">
+      ⚫ Not Assigned
+    </span>
+  )
+}
 
 // ─── Distributor detail flyout ─────────────────────────────────────────────────
 function DistributorFlyout({ code, onClose }) {
@@ -97,6 +131,37 @@ function DistributorFlyout({ code, onClose }) {
                   </div>
                 </div>
               )}
+
+              {/* Active Invoices — same list, same rule (Status AND Remarks
+                  both blank), same service the Distributor Portal itself
+                  uses. An ASM sees exactly what the distributor would see. */}
+              <div className="rounded-xl border border-hub-border overflow-hidden mt-2">
+                <div className="px-4 py-3 bg-hub-bg/40 border-b border-hub-border flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText size={14} className="text-hub-accent" />
+                    <p className="text-sm font-semibold text-hub-text">Active Invoices</p>
+                  </div>
+                  <span className="text-xs text-hub-muted font-mono">
+                    {detail.totalActiveInvoices ?? detail.activeInvoices?.length ?? 0}
+                  </span>
+                </div>
+
+                {!detail.activeInvoices || detail.activeInvoices.length === 0 ? (
+                  <p className="text-xs text-hub-muted text-center py-6">No active invoices for this distributor.</p>
+                ) : (
+                  <div className="divide-y divide-hub-border/60 max-h-80 overflow-y-auto">
+                    {detail.activeInvoices.map(inv => (
+                      <div key={inv.invoiceNo} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                        <div className="min-w-0">
+                          <p className="font-mono text-sm text-hub-text">{inv.invoiceNo}</p>
+                          <p className="text-xs text-hub-muted mt-0.5">{formatInvoiceDate(inv.invoiceDate)}</p>
+                        </div>
+                        <VehicleStatusPill status={inv.vehicleStatus} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

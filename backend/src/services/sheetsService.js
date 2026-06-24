@@ -202,11 +202,17 @@ async function fetchInvoiceMappings() {
 
   const { rowIdx, headers } = found;
   const idx = {
-    invoice:  findColIndex(headers, 'invoice no', 'invoice'),
-    vehicle:  findColIndex(headers, 'vehicle no', 'vehicle'),
-    customer: findColIndex(headers, 'customer'),
-    chain:    findColIndex(headers, 'chain'),
-    location: findColIndex(headers, 'location'),
+    invoice:         findColIndex(headers, 'invoice no', 'invoice'),
+    vehicle:         findColIndex(headers, 'vehicle no', 'vehicle'),
+    customer:        findColIndex(headers, 'customer'),
+    chain:           findColIndex(headers, 'chain'),
+    location:        findColIndex(headers, 'location'),
+    // ── Added for Distributor Portal — purely additive, existing fields above unchanged ──
+    distributorCode: findColIndex(headers, 'distributor code', 'dist code'),
+    distributorName: findColIndex(headers, 'distributor name', 'dist name'),
+    invoiceDate:     findColIndex(headers, 'invoice date', 'date'),
+    status:          findColIndex(headers, 'status'),
+    remarks:         findColIndex(headers, 'any other remarks', 'other remarks', 'remarks'),
   };
 
   const mappings = [];
@@ -220,12 +226,31 @@ async function fetchInvoiceMappings() {
     mappings.push({
       invoiceNo,
       vehicleNo,
-      customerCode: idx.customer >= 0 ? String(row[idx.customer] || '').trim() : '',
-      chainName:    idx.chain    >= 0 ? String(row[idx.chain]    || '').trim() : '',
-      location:     idx.location >= 0 ? String(row[idx.location] || '').trim() : '',
+      customerCode:    idx.customer        >= 0 ? String(row[idx.customer]        || '').trim() : '',
+      chainName:       idx.chain           >= 0 ? String(row[idx.chain]           || '').trim() : '',
+      location:        idx.location        >= 0 ? String(row[idx.location]        || '').trim() : '',
+      distributorCode: idx.distributorCode >= 0 ? String(row[idx.distributorCode] || '').trim() : '',
+      distributorName: idx.distributorName >= 0 ? String(row[idx.distributorName] || '').trim() : '',
+      invoiceDate:     idx.invoiceDate     >= 0 ? String(row[idx.invoiceDate]     || '').trim() : '',
+      status:          idx.status          >= 0 ? String(row[idx.status]          || '').trim() : '',
+      remarks:         idx.remarks         >= 0 ? String(row[idx.remarks]         || '').trim() : '',
     });
   }
   logger.info(`sheetsService: parsed ${mappings.length} invoice→vehicle entries`);
+
+  // ── Diagnostic: confirm the Status column is actually what we think it is ──
+  const blankCount = mappings.filter(m => String(m.status || '').trim() === '').length;
+  const distinctStatuses = new Map();
+  for (const m of mappings) {
+    const s = String(m.status || '').trim() || '(blank)';
+    distinctStatuses.set(s, (distinctStatuses.get(s) || 0) + 1);
+  }
+  logger.info(
+    `sheetsService: Status column check — header matched at index ${idx.status} ` +
+    `(-1 means no "status" header was found at all). ` +
+    `${blankCount}/${mappings.length} rows have a blank status. ` +
+    `Distinct values seen: ${JSON.stringify(Array.from(distinctStatuses.entries()))}`
+  );
   return mappings;
 }
 
@@ -422,4 +447,3 @@ module.exports = {
   fetchRouteData,
   fetchHierarchyData,
 };
-

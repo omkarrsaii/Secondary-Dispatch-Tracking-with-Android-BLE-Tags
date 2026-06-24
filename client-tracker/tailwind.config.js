@@ -6,7 +6,7 @@ export default {
       fontFamily: {
         sans:    ['"Outfit"',        'system-ui', 'sans-serif'],
         mono:    ['"JetBrains Mono"','monospace'],
-        display: ['"Syne"',          'system-ui', 'sans-serif'],
+        display: ['"Unbounded"', 'system-ui', 'sans-serif'],
       },
       colors: {
         ink:   '#0B0F1A',

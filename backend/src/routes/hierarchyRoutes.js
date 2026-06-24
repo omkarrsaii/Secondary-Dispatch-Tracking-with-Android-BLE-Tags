@@ -17,6 +17,7 @@ const logger  = require('../utils/logger');
 const md      = require('../services/masterDataService');
 const { getAllInvoiceMappings, getAllVehicleDeviceMappings } = require('../services/mappingService');
 const { getAllDevices } = require('../db/database');
+const { getActiveInvoicesForDistributor } = require('../services/distributorPortalService');
 
 // ─── Helper: get live vehicle status for a distributor ─────────────────────
 
@@ -84,14 +85,27 @@ router.get('/zones', (req, res) => {
   }
 });
 
+// ─── GET /api/hierarchy/clusters ──────────────────────────────────────────────
+
+router.get('/clusters', (req, res) => {
+  try {
+    const { region } = req.query;
+    let clusters = md.getAllClusters();
+    if (region) clusters = clusters.filter(c => c.region === region);
+    res.json({ clusters });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/hierarchy/asms ──────────────────────────────────────────────────
 
 router.get('/asms', (req, res) => {
   try {
     const { region, cluster } = req.query;
     let asms = md.getAllAsms();
-    if (region)  asms = asms.filter(a => a.region  === region);
-    if (cluster) asms = asms.filter(a => a.ddType  === cluster);
+    if (region)  asms = asms.filter(a => a.region      === region);
+    if (cluster) asms = asms.filter(a => a.clusterName === cluster);
     res.json({ asms });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -154,10 +168,17 @@ router.get('/distributor/:code', (req, res) => {
     const live     = getDistributorLiveData(code, allInvoices, vehicleDevMap, deviceMap);
     const route    = md.getDistributorRoute(code);
 
+    // Same active-invoice list shown in the Distributor Portal — same
+    // service function, same rule (Status AND Remarks both blank), so an
+    // ASM sees exactly what the distributor themselves would see.
+    const activeInvoices = getActiveInvoicesForDistributor(code);
+
     res.json({
       ...hier,
       route,
       liveData: live,
+      activeInvoices,
+      totalActiveInvoices: activeInvoices.length,
     });
   } catch (err) {
     logger.error('GET /api/hierarchy/distributor/:code error: ' + err.message);

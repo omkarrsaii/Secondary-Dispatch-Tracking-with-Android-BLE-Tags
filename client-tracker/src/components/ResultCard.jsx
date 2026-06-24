@@ -170,7 +170,7 @@ export default function ResultCard({ result }) {
             />
           )}
 
-          {/* ── Vehicle Status + Distance from Hub ── */}
+          {/* Vehicle Status + Distance from Hub */}
           <VehicleStatusRow vehicleLat={loc.latitude} vehicleLon={loc.longitude} />
 
           <InfoRow

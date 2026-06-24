@@ -1,4 +1,34 @@
 require('dotenv').config();
+
+// ─── Early sheet-config sanity check ───────────────────────────────────────
+// Printed immediately, before Express/Chrome/anything else starts, so it's
+// always the first thing visible in the terminal on every run.
+(function printSheetConfigSummary() {
+  const fs   = require('fs');
+  const path = require('path');
+  const trim = k => (process.env[k] !== undefined ? String(process.env[k]).trim() : '');
+
+  const keyPath = (() => {
+    const raw = trim('GOOGLE_SERVICE_ACCOUNT_KEY') || './data/service-account-key.json';
+    return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
+  })();
+
+  const rows = [
+    ['Service Account Key', fs.existsSync(keyPath) ? 'found' : 'MISSING', keyPath],
+    ['Invoice Sheet',    trim('INVOICE_SHEET_ID')    ? 'configured' : 'MISSING', trim('INVOICE_SHEET_TAB') || 'Sheet1'],
+    ['Vehicle Sheet',    trim('VEHICLE_SHEET_ID')    ? 'configured' : 'MISSING', trim('VEHICLE_SHEET_TAB') || 'Sheet1'],
+    ['Route Sheet',      trim('ROUTE_SHEET_ID')      ? 'configured' : 'MISSING', trim('ROUTE_SHEET_TAB') || 'Sheet1'],
+    ['Hierarchy Sheet',  trim('HIERARCHY_SHEET_ID')  ? 'configured' : 'MISSING', trim('HIERARCHY_SHEET_TAB') || 'Sheet1'],
+  ];
+
+  console.log('\n┌─ Sheet Configuration ───────────────────────────────────');
+  for (const [label, status, extra] of rows) {
+    const marker = status === 'MISSING' ? '✗' : '✓';
+    console.log(`│ ${marker} ${label.padEnd(20)} ${status.padEnd(12)} (${extra})`);
+  }
+  console.log('└──────────────────────────────────────────────────────────\n');
+})();
+
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
@@ -6,9 +36,10 @@ const logger  = require('./utils/logger');
 
 const apiRoutes       = require('./routes/api');
 const invoiceRoutes   = require('./routes/invoice');
-const routeRoutes     = require('./routes/routeRoutes');
-const hierarchyRoutes = require('./routes/hierarchyRoutes');
-const dashboardRoutes = require('./routes/dashboardRoutes');
+const routeRoutes        = require('./routes/routeRoutes');
+const hierarchyRoutes    = require('./routes/hierarchyRoutes');
+const dashboardRoutes    = require('./routes/dashboardRoutes');
+const distributorRoutes  = require('./routes/distributorRoutes');
 
 const { startScheduler }      = require('./services/schedulerService');
 const { runFetch }             = require('./services/fetchService');
@@ -49,6 +80,7 @@ app.use('/api/routes', routeRoutes);
 app.use('/api/hierarchy', hierarchyRoutes);
 app.use('/api/dashboard', dashboardRoutes);   // includes /api/dashboard/stats
 app.use('/api', dashboardRoutes);             // also exposes /api/search directly
+app.use('/api/distributor', distributorRoutes);
 
 // ─── Production static serving ────────────────────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
