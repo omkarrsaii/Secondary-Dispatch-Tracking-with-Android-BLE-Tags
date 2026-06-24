@@ -1,25 +1,3 @@
-/**
- * mappingService.js
- *
- * ROOT CAUSE FIX (Issue 2):
- *   The previous version tried to read invoice-mapping.json and
- *   vehicle-device-mapping.json as fallbacks. Those files don't exist
- *   → ENOENT errors on every startup.
- *
- *   New architecture:
- *     - Google Sheets is the ONLY required data source (when configured).
- *     - In-memory Maps hold the live data; no JSON files required.
- *     - On Sheets sync failure, the existing in-memory maps are preserved
- *       (last-known-good), rather than wiping to empty.
- *     - JSON files are written after a successful sync as an optional backup,
- *       and read ONCE at startup only if Sheets is not configured (seed data).
- *
- * SYNC LIFECYCLE:
- *   startAutoSync() called once at server start
- *     → immediate syncFromGoogleSheets()
- *     → repeated every SHEET_SYNC_INTERVAL minutes
- */
-
 const fs     = require('fs');
 const path   = require('path');
 const logger = require('../utils/logger');
