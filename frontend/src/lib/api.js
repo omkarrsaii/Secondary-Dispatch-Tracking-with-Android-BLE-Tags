@@ -44,11 +44,21 @@ export const getDistributors      = (params) => api.get('/hierarchy/distributors
 export const getDistributorDetail = (code) =>
   api.get(`/hierarchy/distributor/${encodeURIComponent(code)}`).then(r => r.data)
 
-// ─── Hierarchy: Performance KPIs (added for ASM/TSOE Performance tab) ───────
-export const getAsmKpis  = (name) =>
-  api.get(`/hierarchy/kpis/asm/${encodeURIComponent(name)}`).then(r => r.data)
-export const getTsoeKpis = (name) =>
-  api.get(`/hierarchy/kpis/tsoe/${encodeURIComponent(name)}`).then(r => r.data)
+// ─── Hierarchy: Performance KPIs (Cluster/ASM/TSOE, with optional filters) ──
+// params can include: dateFrom, dateTo, distributorCode
+export const getClusterKpis = (name, params) =>
+  api.get(`/hierarchy/kpis/cluster/${encodeURIComponent(name)}`, { params }).then(r => r.data)
+export const getAsmKpis  = (name, params) =>
+  api.get(`/hierarchy/kpis/asm/${encodeURIComponent(name)}`, { params }).then(r => r.data)
+export const getTsoeKpis = (name, params) =>
+  api.get(`/hierarchy/kpis/tsoe/${encodeURIComponent(name)}`, { params }).then(r => r.data)
+
+// ─── Hierarchy: Active Invoice List + row-click tracking detail ────────────
+// params: scope ('cluster'|'asm'|'tsoe'), name, dateFrom, dateTo, distributorCode, invoiceState
+export const getActiveInvoiceList = (params) =>
+  api.get('/hierarchy/invoices', { params }).then(r => r.data)
+export const getInvoiceTrackingDetail = (invoiceNo) =>
+  api.get(`/hierarchy/invoices/${encodeURIComponent(invoiceNo)}`).then(r => r.data)
 
 // ─── Default export — unchanged, several existing files import this ─────────
 export default api

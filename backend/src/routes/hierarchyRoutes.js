@@ -5,10 +5,16 @@
  * GET  /api/hierarchy/status            — sync status
  * POST /api/hierarchy/sync              — manual sync
  * GET  /api/hierarchy/zones             — all zones with counts
+ * GET  /api/hierarchy/clusters          — all clusters with counts
  * GET  /api/hierarchy/asms              — all ASMs with counts
  * GET  /api/hierarchy/tsoes             — all TSOEs with counts
  * GET  /api/hierarchy/distributors      — flat list of all distributors
  * GET  /api/hierarchy/distributor/:code — single distributor full detail
+ * GET  /api/hierarchy/kpis/cluster/:name — Performance KPIs for a cluster
+ * GET  /api/hierarchy/kpis/asm/:name     — Performance KPIs for an ASM
+ * GET  /api/hierarchy/kpis/tsoe/:name    — Performance KPIs for a TSOE
+ * GET  /api/hierarchy/invoices           — hierarchy-aware Active Invoice List
+ * GET  /api/hierarchy/invoices/:invoiceNo — single-invoice detail (tracking modal)
  */
 
 const express = require('express');
@@ -117,9 +123,10 @@ router.get('/asms', (req, res) => {
 
 router.get('/tsoes', (req, res) => {
   try {
-    const { asm } = req.query;
+    const { asm, cluster } = req.query;
     let tsoes = md.getAllTsoes();
-    if (asm) tsoes = tsoes.filter(t => t.asmName === asm);
+    if (asm)     tsoes = tsoes.filter(t => t.asmName     === asm);
+    if (cluster) tsoes = tsoes.filter(t => t.clusterName === cluster);
     res.json({ tsoes });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -130,11 +137,12 @@ router.get('/tsoes', (req, res) => {
 
 router.get('/distributors', (req, res) => {
   try {
-    const { region, asm, tsoe, status } = req.query;
+    const { region, cluster, asm, tsoe, status } = req.query;
     let distributors = md.getAllDistributors();
-    if (region) distributors = distributors.filter(d => d.region  === region);
-    if (asm)    distributors = distributors.filter(d => d.asmName === asm);
-    if (tsoe)   distributors = distributors.filter(d => d.tsoeName === tsoe);
+    if (region)  distributors = distributors.filter(d => d.region      === region);
+    if (cluster) distributors = distributors.filter(d => d.clusterName === cluster);
+    if (asm)     distributors = distributors.filter(d => d.asmName     === asm);
+    if (tsoe)    distributors = distributors.filter(d => d.tsoeName    === tsoe);
     if (status) distributors = distributors.filter(d =>
       d.status.toLowerCase() === status.toLowerCase()
     );
@@ -187,13 +195,36 @@ router.get('/distributor/:code', (req, res) => {
   }
 });
 
+// ─── GET /api/hierarchy/kpis/cluster/:name ────────────────────────────────────
+// Same KPI set, summed across every ASM/distributor in the cluster.
+// Query params: dateFrom, dateTo (Invoice Date), distributorCode.
+
+router.get('/kpis/cluster/:name', (req, res) => {
+  try {
+    const { dateFrom, dateTo, distributorCode } = req.query;
+    const result = kpi.getKpisForCluster(req.params.name, { dateFrom, dateTo, distributorCode });
+    if (!result) {
+      return res.status(404).json({
+        error:   'CLUSTER_NOT_FOUND',
+        message: `No cluster found matching "${req.params.name}".`,
+      });
+    }
+    res.json(result);
+  } catch (err) {
+    logger.error('GET /api/hierarchy/kpis/cluster/:name error: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/hierarchy/kpis/asm/:name ────────────────────────────────────────
 // Performance KPIs for a single ASM: totalInvoices, activeInvoices,
 // completedInvoices, completionRate (%), overdueInvoices, distributorCount.
+// Query params: dateFrom, dateTo (Invoice Date), distributorCode.
 
 router.get('/kpis/asm/:name', (req, res) => {
   try {
-    const result = kpi.getKpisForAsm(req.params.name);
+    const { dateFrom, dateTo, distributorCode } = req.query;
+    const result = kpi.getKpisForAsm(req.params.name, { dateFrom, dateTo, distributorCode });
     if (!result) {
       return res.status(404).json({
         error:   'ASM_NOT_FOUND',
@@ -209,10 +240,12 @@ router.get('/kpis/asm/:name', (req, res) => {
 
 // ─── GET /api/hierarchy/kpis/tsoe/:name ───────────────────────────────────────
 // Same KPI set, scoped to a single TSOE's distributors.
+// Query params: dateFrom, dateTo (Invoice Date), distributorCode.
 
 router.get('/kpis/tsoe/:name', (req, res) => {
   try {
-    const result = kpi.getKpisForTsoe(req.params.name);
+    const { dateFrom, dateTo, distributorCode } = req.query;
+    const result = kpi.getKpisForTsoe(req.params.name, { dateFrom, dateTo, distributorCode });
     if (!result) {
       return res.status(404).json({
         error:   'TSOE_NOT_FOUND',
@@ -222,6 +255,54 @@ router.get('/kpis/tsoe/:name', (req, res) => {
     res.json(result);
   } catch (err) {
     logger.error('GET /api/hierarchy/kpis/tsoe/:name error: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/hierarchy/invoices ──────────────────────────────────────────────
+// Hierarchy-aware Active Invoice List.
+// Query params: scope ('cluster'|'asm'|'tsoe'), name, dateFrom, dateTo,
+// distributorCode, invoiceState ('all'|'active'|'overdue').
+
+router.get('/invoices', (req, res) => {
+  try {
+    const { scope, name, dateFrom, dateTo, distributorCode, invoiceState } = req.query;
+    if (!scope || !name) {
+      return res.status(400).json({ error: 'MISSING_PARAMS', message: '"scope" and "name" are required.' });
+    }
+    const rows = kpi.getActiveInvoiceList({
+      scope,
+      name,
+      filters: { dateFrom, dateTo, distributorCode, invoiceState },
+    });
+    if (rows === null) {
+      return res.status(404).json({
+        error:   'SCOPE_NOT_FOUND',
+        message: `No ${scope} found matching "${name}".`,
+      });
+    }
+    res.json({ total: rows.length, invoices: rows });
+  } catch (err) {
+    logger.error('GET /api/hierarchy/invoices error: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/hierarchy/invoices/:invoiceNo ───────────────────────────────────
+// Single-invoice detail, used for the row-click tracking modal.
+
+router.get('/invoices/:invoiceNo', (req, res) => {
+  try {
+    const result = kpi.getInvoiceDetail(req.params.invoiceNo);
+    if (!result) {
+      return res.status(404).json({
+        error:   'INVOICE_NOT_FOUND',
+        message: `Invoice "${req.params.invoiceNo}" not found.`,
+      });
+    }
+    res.json(result);
+  } catch (err) {
+    logger.error('GET /api/hierarchy/invoices/:invoiceNo error: ' + err.message);
     res.status(500).json({ error: err.message });
   }
 });

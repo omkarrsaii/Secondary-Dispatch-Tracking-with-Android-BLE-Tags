@@ -280,6 +280,7 @@ function getAllTsoes() {
         tsoeName:     key,
         asmName:      e.asmName  || '',
         region:       e.region   || '',
+        clusterName:  e.clusterName || '',
         distributors: [],
         tsoeMobile:   e.tsoeMobile || '',
       });
@@ -393,6 +394,14 @@ function getAllClusters() {
   }));
 }
 
+/** Get all distributor codes belonging to a single cluster (tab) — used for cluster-level KPIs */
+function getDistributorCodesForCluster(clusterName) {
+  const target = String(clusterName || '').trim();
+  return hierarchyEntries
+    .filter(e => (e.clusterName || '(unassigned)') === target)
+    .map(e => e.distributorCode);
+}
+
 // ─── Cross-cutting helpers ─────────────────────────────────────────────────────
 
 /** Given a distributor code, find which route it belongs to */
@@ -457,6 +466,7 @@ module.exports = {
   getDistributorHierarchy,
   getAllZones,
   getAllClusters,
+  getDistributorCodesForCluster,
   getAllAsms,
   getAllTsoes,
   getAllDistributors,

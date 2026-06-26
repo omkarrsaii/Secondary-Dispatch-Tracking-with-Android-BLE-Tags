@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Building2, AlertCircle, Layers, FileText, BarChart3, TrendingUp, Users, CheckCircle2, Clock } from 'lucide-react'
+import { ChevronRight, ChevronDown, Building2, AlertCircle, Layers, FileText, BarChart3, TrendingUp, Users, CheckCircle2, Clock, Filter, X } from 'lucide-react'
 import Header from '../components/Header'
-import { getHierarchyTree, syncHierarchy, getDistributorDetail, getAsmKpis, getTsoeKpis } from '../lib/api'
+import {
+  getHierarchyTree, syncHierarchy, getDistributorDetail,
+  getClusterKpis, getAsmKpis, getTsoeKpis,
+  getActiveInvoiceList, getInvoiceTrackingDetail, getDistributors,
+} from '../lib/api'
 
 // Sheet dates are DD.MM.YYYY (e.g. "12.02.2026" = 12th February). Native
 // day-month-year order explicitly instead. Kept in sync with the same
@@ -343,44 +347,180 @@ function KpiCard({ icon: Icon, label, value, suffix = '', color = 'text-hub-text
   )
 }
 
-function PerformancePanel({ allAsms, allTsoes }) {
-  const [level, setLevel]     = useState('asm') // 'asm' | 'tsoe'
-  const [name, setName]       = useState('')
-  const [kpis, setKpis]       = useState(null)
-  const [loading, setLoading] = useState(false)
+// ─── Invoice tracking modal (row-click from the Active Invoice List) ──────────
+// Reuses the same backend invoice data already used everywhere else in the
+// app — there's no separate client-tracker app/portal involved here, just
+// an inline modal on top of the existing Hierarchy page.
+function InvoiceTrackingModal({ invoiceNo, onClose }) {
+  const [detail, setDetail]   = useState(null)
+  const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
 
-  const options = level === 'asm'
-    ? Array.from(new Set(allAsms.map(a => a.asmName))).sort()
-    : Array.from(new Set(allTsoes.map(t => t.tsoeName))).sort()
-
-  // Reset selected name when switching level, default to the first option.
   useEffect(() => {
-    setName(options[0] || '')
-  }, [level, options.length])
-
-  useEffect(() => {
-    if (!name) { setKpis(null); return }
     setLoading(true); setError(null)
-    const fetcher = level === 'asm' ? getAsmKpis(name) : getTsoeKpis(name)
-    fetcher
-      .then(setKpis)
+    getInvoiceTrackingDetail(invoiceNo)
+      .then(setDetail)
       .catch(e => setError(e.response?.data?.message || e.message))
       .finally(() => setLoading(false))
-  }, [level, name])
+  }, [invoiceNo])
 
   return (
-    <div className="rounded-xl border border-hub-border bg-hub-card">
-      <div className="px-5 py-4 border-b border-hub-border flex items-center gap-2">
-        <BarChart3 size={16} className="text-hub-accent" />
-        <h2 className="font-display font-semibold text-sm text-hub-text">Performance</h2>
-      </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-md bg-hub-card border border-hub-border rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-hub-border">
+          <div>
+            <h2 className="font-display font-semibold text-hub-text">Tracking</h2>
+            <p className="text-xs text-hub-muted font-mono mt-0.5">{invoiceNo}</p>
+          </div>
+          <button onClick={onClose} className="text-hub-muted hover:text-hub-text p-1 rounded hover:bg-hub-border/30 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
 
-      <div className="p-5 space-y-5">
-        {/* Selectors */}
+        <div className="p-5">
+          {loading && (
+            <div className="flex justify-center py-8">
+              <div className="w-6 h-6 border-2 border-hub-accent/30 border-t-hub-accent rounded-full animate-spin" />
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-2 text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg p-3">
+              <AlertCircle size={14} /><span className="text-sm">{error}</span>
+            </div>
+          )}
+          {detail && !loading && !error && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-center py-2">
+                <VehicleStatusPill status={detail.vehicleStatus} />
+              </div>
+              {[
+                ['Distributor',     `${detail.distributorName || ''} ${detail.distributorCode ? `(${detail.distributorCode})` : ''}`.trim()],
+                ['ASM',             detail.asmName],
+                ['HQ',              detail.tsoeName],
+                ['Status',          detail.status],
+                ['Vehicle No.',     detail.vehicleNo || '—'],
+                ['Invoice Date',    formatInvoiceDate(detail.invoiceDate)],
+                ['Appointment Date', formatInvoiceDate(detail.appointmentDate)],
+                ['Age',             detail.ageDays != null ? `${detail.ageDays} day(s)` : '—'],
+              ].filter(([, v]) => v).map(([label, value]) => (
+                <div key={label} className="flex items-start justify-between border-b border-hub-border/50 pb-2">
+                  <span className="text-xs text-hub-muted">{label}</span>
+                  <span className="text-xs text-hub-text text-right">{value}</span>
+                </div>
+              ))}
+              <p className="text-xs text-hub-muted text-center pt-2">
+                Same tracking data the Distributor Portal uses for this invoice.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Performance KPIs panel (Cluster → ASM / TSOE drill-down) ─────────────────
+// Pick a Cluster first, then optionally drill down to a specific ASM or
+// TSOE within it. KPI cards + the Active Invoice List below them always
+// reflect the same scope and the same Date Range / Distributor filters —
+// the Invoice Status filter (Active/Overdue) only narrows the list itself.
+
+function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
+  const [selectedCluster, setSelectedCluster] = useState('')
+  const [level, setLevel]     = useState('cluster') // 'cluster' | 'asm' | 'tsoe'
+  const [name, setName]       = useState('')
+
+  const [dateFrom, setDateFrom]             = useState('')
+  const [dateTo, setDateTo]                 = useState('')
+  const [distributorFilter, setDistributorFilter] = useState('')
+  const [invoiceState, setInvoiceState]     = useState('all') // 'all' | 'active' | 'overdue'
+  const [distributorOptions, setDistributorOptions] = useState([])
+
+  const [kpis, setKpis]         = useState(null)
+  const [invoices, setInvoices] = useState([])
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState(null)
+  const [trackingInvoice, setTrackingInvoice] = useState(null)
+
+  // Default to the first cluster once the list loads.
+  useEffect(() => {
+    if (!selectedCluster && clusters.length) setSelectedCluster(clusters[0])
+  }, [clusters, selectedCluster])
+
+  const asmOptions = Array.from(
+    new Set(asmsFlat.filter(a => a.clusterName === selectedCluster).map(a => a.asmName))
+  ).sort()
+  const tsoeOptions = Array.from(
+    new Set(tsoesFlat.filter(t => t.clusterName === selectedCluster).map(t => t.tsoeName))
+  ).sort()
+
+  // Reset the drill-down name whenever cluster or level changes.
+  useEffect(() => {
+    if (level === 'asm')  setName(asmOptions[0] || '')
+    else if (level === 'tsoe') setName(tsoeOptions[0] || '')
+    else setName('')
+    setDistributorFilter('') // distributor list will change scope too
+  }, [level, selectedCluster]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Distributor filter options, scoped to the current cluster/ASM/TSOE.
+  useEffect(() => {
+    if (!selectedCluster) return
+    const params = { cluster: selectedCluster }
+    if (level === 'asm' && name)  params.asm  = name
+    if (level === 'tsoe' && name) params.tsoe = name
+    getDistributors(params)
+      .then(d => setDistributorOptions(d.distributors || []))
+      .catch(() => setDistributorOptions([]))
+  }, [selectedCluster, level, name])
+
+  // Main data load: KPI cards + Active Invoice List, same scope & filters.
+  useEffect(() => {
+    const scopeName = level === 'cluster' ? selectedCluster : name
+    if (!scopeName) { setKpis(null); setInvoices([]); return }
+
+    setLoading(true); setError(null)
+    const filterParams = {
+      dateFrom: dateFrom || undefined,
+      dateTo:   dateTo   || undefined,
+      distributorCode: distributorFilter || undefined,
+    }
+    const kpiFetcher =
+      level === 'cluster' ? getClusterKpis(scopeName, filterParams) :
+      level === 'asm'     ? getAsmKpis(scopeName, filterParams)     :
+                             getTsoeKpis(scopeName, filterParams)
+
+    Promise.all([
+      kpiFetcher,
+      getActiveInvoiceList({ scope: level, name: scopeName, ...filterParams, invoiceState }),
+    ])
+      .then(([k, list]) => { setKpis(k); setInvoices(list.invoices || []) })
+      .catch(e => setError(e.response?.data?.message || e.message))
+      .finally(() => setLoading(false))
+  }, [level, selectedCluster, name, dateFrom, dateTo, distributorFilter, invoiceState])
+
+  // Hierarchy-aware columns — drop the levels already implied by the current scope.
+  const showAsmCol  = level === 'cluster'
+  const showHqCol   = level === 'cluster' || level === 'asm'
+
+  return (
+    <div className="space-y-4">
+      {/* Cluster selector — always required, drives everything below */}
+      <div className="rounded-xl border border-hub-border bg-hub-card p-4">
         <div className="flex flex-wrap items-center gap-3">
+          <Layers size={14} className="text-hub-accent2 flex-shrink-0" />
+          <label className="text-xs text-hub-muted uppercase tracking-wider flex-shrink-0">Cluster</label>
+          <select
+            value={selectedCluster}
+            onChange={e => setSelectedCluster(e.target.value)}
+            className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg bg-hub-bg/40 border border-hub-border text-sm text-hub-text focus:outline-none focus:border-hub-accent/50"
+          >
+            {clusters.length === 0 && <option value="">No clusters found</option>}
+            {clusters.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+
           <div className="flex rounded-lg border border-hub-border overflow-hidden">
-            {['asm', 'tsoe'].map(l => (
+            {['cluster', 'asm', 'tsoe'].map(l => (
               <button
                 key={l}
                 onClick={() => setLevel(l)}
@@ -393,43 +533,149 @@ function PerformancePanel({ allAsms, allTsoes }) {
             ))}
           </div>
 
-          <select
-            value={name}
-            onChange={e => setName(e.target.value)}
-            className="flex-1 min-w-[180px] px-3 py-1.5 rounded-lg bg-hub-bg/40 border border-hub-border text-sm text-hub-text focus:outline-none focus:border-hub-accent/50"
-          >
-            {options.length === 0 && <option value="">No {level === 'asm' ? 'ASMs' : 'TSOEs'} found</option>}
-            {options.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+          {level !== 'cluster' && (
+            <select
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg bg-hub-bg/40 border border-hub-border text-sm text-hub-text focus:outline-none focus:border-hub-accent/50"
+            >
+              {(level === 'asm' ? asmOptions : tsoeOptions).length === 0 &&
+                <option value="">No {level === 'asm' ? 'ASMs' : 'TSOEs'} in this cluster</option>}
+              {(level === 'asm' ? asmOptions : tsoeOptions).map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          )}
         </div>
-
-        {loading && (
-          <div className="flex justify-center py-10">
-            <div className="w-6 h-6 border-2 border-hub-accent/30 border-t-hub-accent rounded-full animate-spin" />
-          </div>
-        )}
-
-        {error && (
-          <div className="flex items-center gap-2 text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg p-3">
-            <AlertCircle size={14} /><span className="text-sm">{error}</span>
-          </div>
-        )}
-
-        {kpis && !loading && !error && (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            <KpiCard icon={Users}        label="Distributors"       value={kpis.distributorCount} color="text-hub-text" />
-            <KpiCard icon={FileText}     label="Total Invoices"     value={kpis.totalInvoices}    color="text-hub-accent" />
-            <KpiCard icon={TrendingUp}   label="Active"             value={kpis.activeInvoices}   color="text-hub-yellow" />
-            <KpiCard icon={CheckCircle2} label="Completion Rate"    value={kpis.completionRate} suffix="%" color="text-hub-green"
-              sub={`${kpis.completedInvoices} of ${kpis.totalInvoices} completed`} />
-            <KpiCard icon={Clock}        label="Overdue (active)"   value={kpis.overdueInvoices}  color={kpis.overdueInvoices > 0 ? 'text-hub-red' : 'text-hub-muted'} />
-          </div>
-        )}
-
-        {!kpis && !loading && !error && name && (
-          <p className="text-hub-muted text-sm text-center py-6">No data for this selection.</p>
-        )}
       </div>
+
+      {/* Filters — narrow the KPI cards AND the Active Invoice List together */}
+      <div className="rounded-xl border border-hub-border bg-hub-card p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Filter size={14} className="text-hub-muted flex-shrink-0" />
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-hub-muted">From</label>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              className="px-2 py-1.5 rounded-lg bg-hub-bg/40 border border-hub-border text-xs text-hub-text focus:outline-none focus:border-hub-accent/50" />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-hub-muted">To</label>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              className="px-2 py-1.5 rounded-lg bg-hub-bg/40 border border-hub-border text-xs text-hub-text focus:outline-none focus:border-hub-accent/50" />
+          </div>
+
+          <select
+            value={distributorFilter}
+            onChange={e => setDistributorFilter(e.target.value)}
+            className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg bg-hub-bg/40 border border-hub-border text-xs text-hub-text focus:outline-none focus:border-hub-accent/50"
+          >
+            <option value="">All Distributors</option>
+            {distributorOptions.map(d => (
+              <option key={d.distributorCode} value={d.distributorCode}>{d.distributorName || d.distributorCode}</option>
+            ))}
+          </select>
+
+          <select
+            value={invoiceState}
+            onChange={e => setInvoiceState(e.target.value)}
+            className="px-3 py-1.5 rounded-lg bg-hub-bg/40 border border-hub-border text-xs text-hub-text focus:outline-none focus:border-hub-accent/50"
+          >
+            <option value="all">All Active</option>
+            <option value="active">On-Time Only</option>
+            <option value="overdue">Overdue Only</option>
+          </select>
+
+          {(dateFrom || dateTo || distributorFilter || invoiceState !== 'all') && (
+            <button
+              onClick={() => { setDateFrom(''); setDateTo(''); setDistributorFilter(''); setInvoiceState('all') }}
+              className="text-xs text-hub-muted hover:text-hub-text underline"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loading && (
+        <div className="flex justify-center py-10">
+          <div className="w-6 h-6 border-2 border-hub-accent/30 border-t-hub-accent rounded-full animate-spin" />
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg p-3">
+          <AlertCircle size={14} /><span className="text-sm">{error}</span>
+        </div>
+      )}
+
+      {kpis && !loading && !error && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <KpiCard icon={Users}        label="Distributors"       value={kpis.distributorCount} color="text-hub-text" />
+          <KpiCard icon={FileText}     label="Total Invoices"     value={kpis.totalInvoices}    color="text-hub-accent" />
+          <KpiCard icon={TrendingUp}   label="Active"             value={kpis.activeInvoices}   color="text-hub-yellow" />
+          <KpiCard icon={CheckCircle2} label="Completion Rate"    value={kpis.completionRate} suffix="%" color="text-hub-green"
+            sub={`${kpis.completedInvoices} of ${kpis.totalInvoices} completed`} />
+          <KpiCard icon={Clock}        label="Overdue (active)"   value={kpis.overdueInvoices}  color={kpis.overdueInvoices > 0 ? 'text-hub-red' : 'text-hub-muted'} />
+        </div>
+      )}
+
+      {/* Active Invoice List — hierarchy-aware columns, click a row to track */}
+      {!loading && !error && kpis && (
+        <div className="rounded-xl border border-hub-border bg-hub-card overflow-hidden">
+          <div className="px-5 py-4 border-b border-hub-border flex items-center gap-2">
+            <FileText size={16} className="text-hub-accent" />
+            <h2 className="font-display font-semibold text-sm text-hub-text">Active Invoice List</h2>
+            <span className="ml-auto text-xs text-hub-muted font-mono">{invoices.length}</span>
+          </div>
+
+          {invoices.length === 0 ? (
+            <p className="text-hub-muted text-sm text-center py-8">No active invoices match the current filters.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-hub-muted uppercase tracking-wider border-b border-hub-border">
+                    <th className="px-4 py-2.5 font-medium">Invoice No</th>
+                    {showAsmCol && <th className="px-4 py-2.5 font-medium">ASM</th>}
+                    {showHqCol  && <th className="px-4 py-2.5 font-medium">HQ</th>}
+                    <th className="px-4 py-2.5 font-medium">Distributor</th>
+                    <th className="px-4 py-2.5 font-medium">Status</th>
+                    <th className="px-4 py-2.5 font-medium">Vehicle</th>
+                    <th className="px-4 py-2.5 font-medium">Last Updated</th>
+                    <th className="px-4 py-2.5 font-medium">Age</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-hub-border/60">
+                  {invoices.map(inv => (
+                    <tr
+                      key={inv.invoiceNo}
+                      onClick={() => setTrackingInvoice(inv.invoiceNo)}
+                      className="cursor-pointer hover:bg-hub-bg/40 transition-colors"
+                    >
+                      <td className="px-4 py-2.5 font-mono text-hub-text whitespace-nowrap">{inv.invoiceNo}</td>
+                      {showAsmCol && <td className="px-4 py-2.5 text-hub-text whitespace-nowrap">{inv.asmName || '—'}</td>}
+                      {showHqCol  && <td className="px-4 py-2.5 text-hub-text whitespace-nowrap">{inv.tsoeName || '—'}</td>}
+                      <td className="px-4 py-2.5 text-hub-text whitespace-nowrap">{inv.distributorName || inv.distributorCode}</td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                          inv.isOverdue ? 'bg-hub-red/15 text-hub-red border border-hub-red/30' : 'bg-hub-yellow/15 text-hub-yellow border border-hub-yellow/30'
+                        }`}>
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap"><VehicleStatusPill status={inv.vehicleStatus} /></td>
+                      <td className="px-4 py-2.5 text-hub-muted whitespace-nowrap">{formatInvoiceDate(inv.lastUpdated)}</td>
+                      <td className="px-4 py-2.5 text-hub-muted whitespace-nowrap">{inv.ageDays != null ? `${inv.ageDays}d` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {trackingInvoice && (
+        <InvoiceTrackingModal invoiceNo={trackingInvoice} onClose={() => setTrackingInvoice(null)} />
+      )}
     </div>
   )
 }
@@ -463,6 +709,21 @@ export default function HierarchyPage() {
   const allDdTypes   = allAsms.flatMap(a => a.ddTypes)
   const allTsoes     = allDdTypes.flatMap(d => d.tsoes)
   const totalDists   = allTsoes.flatMap(t => t.distributors).length
+
+  // Cluster-aware flattening for the Performance panel — same tree data,
+  // just carrying clusterName (and asmName, for TSOEs) along so the panel
+  // can filter ASMs/TSOEs down to the selected cluster.
+  const clusterNames = allClusters.map(c => c.clusterName).sort()
+  const asmsFlat = allClusters.flatMap(c =>
+    c.asms.map(a => ({ asmName: a.asmName, clusterName: c.clusterName }))
+  )
+  const tsoesFlat = allClusters.flatMap(c =>
+    c.asms.flatMap(a =>
+      a.ddTypes.flatMap(d =>
+        d.tsoes.map(t => ({ tsoeName: t.tsoeName, clusterName: c.clusterName, asmName: a.asmName }))
+      )
+    )
+  )
 
   return (
     <div className="min-h-screen">
@@ -544,7 +805,7 @@ export default function HierarchyPage() {
 
         {/* Performance */}
         {tab === 'performance' && (
-          <PerformancePanel allAsms={allAsms} allTsoes={allTsoes} />
+          <PerformancePanel clusters={clusterNames} asmsFlat={asmsFlat} tsoesFlat={tsoesFlat} />
         )}
       </div>
 
