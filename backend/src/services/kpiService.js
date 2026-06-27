@@ -100,18 +100,18 @@ function buildKpisForDistributorCodes(distributorCodes, filters = {}) {
   };
 }
 
-/** KPIs for a single ASM, matched against the same asmName key masterDataService.getAllAsms() uses. */
-function getKpisForAsm(asmName, filters = {}) {
-  const name = String(asmName || '').trim();
-  const asm  = md.getAllAsms().find(a => a.asmName === name);
+/** KPIs for a single ASM Area (the stable territory key after Change 1). */
+function getKpisForAsm(asmArea, filters = {}) {
+  const name = String(asmArea || '').trim();
+  const asm  = md.getAllAsms().find(a => a.asmArea === name);   // ← match by Area now
   if (!asm) {
-    logger.warn(`kpiService: no ASM found matching "${name}"`);
+    logger.warn(`kpiService: no ASM Area found matching "${name}"`);
     return null;
   }
   return {
-    asmName: asm.asmName,
-    asmArea: asm.asmArea,
-    region:  asm.region,
+    asmArea:  asm.asmArea,
+    asmNames: asm.asmNames,   // array of person-names who hold/held this area
+    region:   asm.region,
     ...buildKpisForDistributorCodes(asm.distributors, filters),
   };
 }
@@ -127,6 +127,7 @@ function getKpisForTsoe(tsoeName, filters = {}) {
   return {
     tsoeName: tsoe.tsoeName,
     asmName:  tsoe.asmName,
+    asmArea:  tsoe.asmArea,   // ← Change 1: expose stable area reference
     region:   tsoe.region,
     ...buildKpisForDistributorCodes(tsoe.distributors, filters),
   };
@@ -171,7 +172,7 @@ function enrichInvoiceRow(m, todayMs) {
 
   return {
     invoiceNo:       m.invoiceNo,
-    asmName:         hier.asmName  || '',
+    asmArea:         hier.asmArea  || '',   // ← stable Area (Change 1)
     tsoeName:        hier.tsoeName || '', // "HQ" in the UI
     distributorCode: m.distributorCode,
     distributorName: m.distributorName || hier.distributorName || '',
@@ -202,7 +203,7 @@ function getActiveInvoiceList({ scope, name, filters = {} }) {
   if (scope === 'cluster') {
     codes = md.getDistributorCodesForCluster(name);
   } else if (scope === 'asm') {
-    const asm = md.getAllAsms().find(a => a.asmName === String(name || '').trim());
+    const asm = md.getAllAsms().find(a => a.asmArea === String(name || '').trim());   // ← Change 1
     codes = asm ? asm.distributors : null;
   } else if (scope === 'tsoe') {
     const tsoe = md.getAllTsoes().find(t => t.tsoeName === String(name || '').trim());

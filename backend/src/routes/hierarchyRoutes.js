@@ -53,6 +53,32 @@ function getDistributorLiveData(distributorCode, allInvoices, vehicleDevMap, dev
   return { invoiceCount: invoices.length, vehicleCount: vehicleNos.size, vehicles: activeVehicles };
 }
 
+// ─── Helper: get live GPS data for an invoice's vehicle (Change 2) ─────────────
+// Follows the same lookup chain used by /api/invoice/track/:invoiceNo — one
+// source of truth for "where is this vehicle right now."
+
+function getInvoiceLiveTracking(vehicleNo, vehicleDevMap, deviceMap) {
+  if (!vehicleNo) return null;
+  const deviceName = vehicleDevMap.get(String(vehicleNo).trim());
+  if (!deviceName) return null;
+  const device = deviceMap.get(deviceName);
+  if (!device) return null;
+
+  const hasCoords = device.latitude && device.longitude;
+  return {
+    deviceName,
+    latitude:  hasCoords ? parseFloat(device.latitude)  : null,
+    longitude: hasCoords ? parseFloat(device.longitude) : null,
+    lastSeen:  device.last_seen_text || null,
+    battery:   device.battery        || null,
+    city:      device.city           || null,
+    state:     device.state          || null,
+    mapsUrl:   hasCoords
+      ? `https://www.google.com/maps?q=${device.latitude},${device.longitude}`
+      : null,
+  };
+}
+
 // ─── GET /api/hierarchy/tree ──────────────────────────────────────────────────
 
 router.get('/tree', (req, res) => {
@@ -148,7 +174,7 @@ router.get('/tsoes', (req, res) => {
   try {
     const { asm, cluster } = req.query;
     let tsoes = md.getAllTsoes();
-    if (asm)     tsoes = tsoes.filter(t => t.asmName     === asm);
+    if (asm)     tsoes = tsoes.filter(t => t.asmArea     === asm);   // ← match Area (Change 1)
     if (cluster) tsoes = tsoes.filter(t => t.clusterName === cluster);
     res.json({ tsoes });
   } catch (err) {
@@ -164,7 +190,7 @@ router.get('/distributors', (req, res) => {
     let distributors = md.getAllDistributors();
     if (region)  distributors = distributors.filter(d => d.region      === region);
     if (cluster) distributors = distributors.filter(d => d.clusterName === cluster);
-    if (asm)     distributors = distributors.filter(d => d.asmName     === asm);
+    if (asm)     distributors = distributors.filter(d => d.asmArea     === asm);   // ← Area (Change 1)
     if (tsoe)    distributors = distributors.filter(d => d.tsoeName    === tsoe);
     if (status) distributors = distributors.filter(d =>
       d.status.toLowerCase() === status.toLowerCase()
@@ -312,7 +338,9 @@ router.get('/invoices', (req, res) => {
 });
 
 // ─── GET /api/hierarchy/invoices/:invoiceNo ───────────────────────────────────
-// Single-invoice detail, used for the row-click tracking modal.
+// Single-invoice detail, used for the row-click tracking modal (admin) and
+// the Search page detail modal.  Now also includes live GPS coordinates,
+// last-seen text, and a Google Maps link when the vehicle has a device (Change 2).
 
 router.get('/invoices/:invoiceNo', (req, res) => {
   try {
@@ -323,7 +351,15 @@ router.get('/invoices/:invoiceNo', (req, res) => {
         message: `Invoice "${req.params.invoiceNo}" not found.`,
       });
     }
-    res.json(result);
+
+    // Enrich with live vehicle GPS — same lookup the public /api/invoice/track uses.
+    const vehicleDevMap = new Map(
+      getAllVehicleDeviceMappings().map(v => [v.vehicleNo, v.deviceName])
+    );
+    const deviceMap = new Map(getAllDevices().map(d => [d.device_name, d]));
+    const tracking  = getInvoiceLiveTracking(result.vehicleNo, vehicleDevMap, deviceMap);
+
+    res.json({ ...result, tracking });
   } catch (err) {
     logger.error('GET /api/hierarchy/invoices/:invoiceNo error: ' + err.message);
     res.status(500).json({ error: err.message });

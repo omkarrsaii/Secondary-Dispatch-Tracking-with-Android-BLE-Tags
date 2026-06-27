@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Building2, AlertCircle, Layers, FileText, BarChart3, TrendingUp, Users, CheckCircle2, Clock, Filter, X } from 'lucide-react'
+import { ChevronRight, ChevronDown, Building2, AlertCircle, Layers, FileText, BarChart3, TrendingUp, Users, CheckCircle2, Clock, Filter, X, MapPin } from 'lucide-react'
 import Header from '../components/Header'
 import {
   getHierarchyTree, syncHierarchy, getDistributorDetail,
@@ -88,7 +88,7 @@ function DistributorFlyout({ code, onClose }) {
                   {[
                     { label: detail.region,      color: 'text-hub-accent' },
                     { label: detail.clusterName,  color: 'text-hub-accent2' },
-                    { label: detail.asmName,      color: 'text-hub-green' },
+                    { label: detail.asmArea,      color: 'text-hub-green' },   // ← Area now (Change 1)
                     { label: detail.ddType,       color: 'text-hub-yellow' },
                     { label: detail.tsoeName,     color: 'text-hub-text' },
                   ].filter(n => n.label).map((node, i, arr) => (
@@ -106,7 +106,7 @@ function DistributorFlyout({ code, onClose }) {
                 ['Distributor Name', detail.distributorName],
                 ['Town / City',      detail.townCity],
                 ['Status',           detail.status],
-                ['ASM Area',         detail.asmArea],
+                ['ASM Name',         detail.asmName],    // person-name as supplementary info
                 ['Route',            detail.route || '—'],
                 ['Dist Mobile',      detail.distMobile, 'mono'],
                 ['TSOE Mobile',      detail.tsoeMobile, 'mono'],
@@ -247,6 +247,8 @@ function DdTypeNode({ ddType, onSelect }) {
 function AsmNode({ asm, onSelect }) {
   const [open, setOpen] = useState(false)
   const tsoeCount = asm.ddTypes.reduce((s, d) => s + d.tsoes.length, 0)
+  // asmNames = people who hold/have held this area (may be empty if not yet populated)
+  const nameLabel = asm.asmNames?.length > 0 ? asm.asmNames.join(', ') : null
   return (
     <div>
       <button
@@ -254,11 +256,11 @@ function AsmNode({ asm, onSelect }) {
         className="flex items-center gap-2 w-full px-3 py-2 rounded-lg hover:bg-hub-bg/50 transition-colors group"
       >
         <ChevronRight size={14} className={`text-hub-green transition-transform ${open ? 'rotate-90' : ''}`} />
-        <span className="text-sm font-medium text-hub-text group-hover:text-hub-green transition-colors">{asm.asmName}</span>
-        {asm.asmArea && (
-          <span className="text-xs text-hub-muted px-1.5 py-0.5 rounded bg-hub-border/40">{asm.asmArea}</span>
+        <span className="text-sm font-medium text-hub-text group-hover:text-hub-green transition-colors">{asm.asmArea}</span>
+        {nameLabel && (
+          <span className="text-xs text-hub-muted px-1.5 py-0.5 rounded bg-hub-border/40 truncate max-w-[160px]" title={nameLabel}>{nameLabel}</span>
         )}
-        <span className="ml-auto text-xs text-hub-muted">{asm.ddTypes.length} DD types · {tsoeCount} TSOEs</span>
+        <span className="ml-auto text-xs text-hub-muted flex-shrink-0">{asm.ddTypes.length} DD types · {tsoeCount} TSOEs</span>
       </button>
       {open && (
         <div className="ml-5 mt-1 space-y-0.5 border-l border-hub-border pl-3">
@@ -295,7 +297,7 @@ function ClusterNode({ cluster, onSelect }) {
       {open && (
         <div className="p-3 space-y-1">
           {cluster.asms.map(a => (
-            <AsmNode key={a.asmName} asm={a} onSelect={onSelect} />
+            <AsmNode key={a.asmArea} asm={a} onSelect={onSelect} />
           ))}
         </div>
       )}
@@ -396,7 +398,7 @@ function InvoiceTrackingModal({ invoiceNo, onClose }) {
               </div>
               {[
                 ['Distributor',     `${detail.distributorName || ''} ${detail.distributorCode ? `(${detail.distributorCode})` : ''}`.trim()],
-                ['ASM',             detail.asmName],
+                ['ASM Area',        detail.asmArea],
                 ['HQ',              detail.tsoeName],
                 ['Status',          detail.status],
                 ['Vehicle No.',     detail.vehicleNo || '—'],
@@ -409,9 +411,49 @@ function InvoiceTrackingModal({ invoiceNo, onClose }) {
                   <span className="text-xs text-hub-text text-right">{value}</span>
                 </div>
               ))}
-              <p className="text-xs text-hub-muted text-center pt-2">
-                Same tracking data the Distributor Portal uses for this invoice.
-              </p>
+
+              {/* Live GPS section — only renders when vehicle has a device (Change 2) */}
+              {detail.tracking && (
+                <div className="rounded-lg border border-hub-border/60 bg-hub-bg/30 p-3 space-y-2 mt-1">
+                  <p className="text-xs text-hub-muted uppercase tracking-wider">Live Location</p>
+                  {detail.tracking.lastSeen && (
+                    <div className="flex items-start justify-between">
+                      <span className="text-xs text-hub-muted">Last Seen</span>
+                      <span className="text-xs text-hub-text text-right">{detail.tracking.lastSeen}</span>
+                    </div>
+                  )}
+                  {detail.tracking.latitude != null && (
+                    <div className="flex items-start justify-between">
+                      <span className="text-xs text-hub-muted">Coordinates</span>
+                      <span className="text-xs font-mono text-hub-text text-right">
+                        {detail.tracking.latitude.toFixed(5)}, {detail.tracking.longitude.toFixed(5)}
+                      </span>
+                    </div>
+                  )}
+                  {detail.tracking.battery && (
+                    <div className="flex items-start justify-between">
+                      <span className="text-xs text-hub-muted">Battery</span>
+                      <span className="text-xs text-hub-text">{detail.tracking.battery}</span>
+                    </div>
+                  )}
+                  {detail.tracking.mapsUrl && (
+                    <a
+                      href={detail.tracking.mapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-1.5 w-full mt-1 px-3 py-1.5 rounded-lg bg-hub-accent/10 border border-hub-accent/30 text-hub-accent text-xs font-medium hover:bg-hub-accent/20 transition-colors"
+                    >
+                      <MapPin size={12} /> View on Map
+                    </a>
+                  )}
+                  {!detail.tracking.latitude && !detail.tracking.lastSeen && (
+                    <p className="text-xs text-hub-muted text-center">Device found but no location data yet.</p>
+                  )}
+                </div>
+              )}
+              {!detail.tracking && (
+                <p className="text-xs text-hub-muted text-center pt-1">No vehicle tracking device assigned.</p>
+              )}
             </div>
           )}
         </div>
@@ -449,7 +491,7 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
   }, [clusters, selectedCluster])
 
   const asmOptions = Array.from(
-    new Set(asmsFlat.filter(a => a.clusterName === selectedCluster).map(a => a.asmName))
+    new Set(asmsFlat.filter(a => a.clusterName === selectedCluster).map(a => a.asmArea))
   ).sort()
   const tsoeOptions = Array.from(
     new Set(tsoesFlat.filter(t => t.clusterName === selectedCluster).map(t => t.tsoeName))
@@ -634,7 +676,7 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
                 <thead>
                   <tr className="text-left text-xs text-hub-muted uppercase tracking-wider border-b border-hub-border">
                     <th className="px-4 py-2.5 font-medium">Invoice No</th>
-                    {showAsmCol && <th className="px-4 py-2.5 font-medium">ASM</th>}
+                    {showAsmCol && <th className="px-4 py-2.5 font-medium">ASM Area</th>}
                     {showHqCol  && <th className="px-4 py-2.5 font-medium">HQ</th>}
                     <th className="px-4 py-2.5 font-medium">Distributor</th>
                     <th className="px-4 py-2.5 font-medium">Status</th>
@@ -651,7 +693,7 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
                       className="cursor-pointer hover:bg-hub-bg/40 transition-colors"
                     >
                       <td className="px-4 py-2.5 font-mono text-hub-text whitespace-nowrap">{inv.invoiceNo}</td>
-                      {showAsmCol && <td className="px-4 py-2.5 text-hub-text whitespace-nowrap">{inv.asmName || '—'}</td>}
+                      {showAsmCol && <td className="px-4 py-2.5 text-hub-text whitespace-nowrap">{inv.asmArea || '—'}</td>}
                       {showHqCol  && <td className="px-4 py-2.5 text-hub-text whitespace-nowrap">{inv.tsoeName || '—'}</td>}
                       <td className="px-4 py-2.5 text-hub-text whitespace-nowrap">{inv.distributorName || inv.distributorCode}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
@@ -711,16 +753,16 @@ export default function HierarchyPage() {
   const totalDists   = allTsoes.flatMap(t => t.distributors).length
 
   // Cluster-aware flattening for the Performance panel — same tree data,
-  // just carrying clusterName (and asmName, for TSOEs) along so the panel
+  // just carrying clusterName (and asmArea, for TSOEs) along so the panel
   // can filter ASMs/TSOEs down to the selected cluster.
   const clusterNames = allClusters.map(c => c.clusterName).sort()
   const asmsFlat = allClusters.flatMap(c =>
-    c.asms.map(a => ({ asmName: a.asmName, clusterName: c.clusterName }))
+    c.asms.map(a => ({ asmArea: a.asmArea, asmNames: a.asmNames, clusterName: c.clusterName }))
   )
   const tsoesFlat = allClusters.flatMap(c =>
     c.asms.flatMap(a =>
       a.ddTypes.flatMap(d =>
-        d.tsoes.map(t => ({ tsoeName: t.tsoeName, clusterName: c.clusterName, asmName: a.asmName }))
+        d.tsoes.map(t => ({ tsoeName: t.tsoeName, clusterName: c.clusterName, asmArea: a.asmArea }))
       )
     )
   )

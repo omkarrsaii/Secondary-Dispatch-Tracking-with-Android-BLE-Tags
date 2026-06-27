@@ -277,7 +277,7 @@ function getAllZones() {
     }
     const z = zones.get(e.region);
     if (e.clusterName) z.clusters.add(e.clusterName);
-    if (e.asmName)     z.asms.add(e.asmName);
+    if (e.asmArea)     z.asms.add(e.asmArea);   // count distinct Areas, not volatile names
     z.distributors++;
   }
   return Array.from(zones.values()).map(z => ({
@@ -288,15 +288,22 @@ function getAllZones() {
   }));
 }
 
-/** Get all distinct ASMs with their distributors */
+/**
+ * Get all distinct ASM Areas with their distributors.
+ *
+ * Grouped by asmArea (the stable territory label) rather than asmName
+ * (the person currently holding the role). asmNames accumulates every
+ * distinct person-name seen for that area, so callers can still show
+ * "currently held by X" without making the Area itself volatile.
+ */
 function getAllAsms() {
   const asms = new Map();
   for (const e of hierarchyEntries) {
-    const key = e.asmName || '(unassigned)';
+    const key = e.asmArea || '(unassigned)';   // ← stable grouping key (Change 1)
     if (!asms.has(key)) {
       asms.set(key, {
-        asmName:     key,
-        asmArea:     e.asmArea     || '',
+        asmArea:     key,
+        asmNames:    new Set(),   // people who hold/have held this area
         region:      e.region      || '',
         clusterName: e.clusterName || '',
         ddTypes:     new Set(),
@@ -305,18 +312,20 @@ function getAllAsms() {
       });
     }
     const a = asms.get(key);
+    if (e.asmName)  a.asmNames.add(e.asmName);
     if (e.ddType)   a.ddTypes.add(e.ddType);
     if (e.tsoeName) a.tsoes.add(e.tsoeName);
     a.distributors.push(e.distributorCode);
   }
   return Array.from(asms.values()).map(a => ({
     ...a,
+    asmNames:         Array.from(a.asmNames).filter(Boolean),
     ddTypeCount:      a.ddTypes.size,
     tsoeCount:        a.tsoes.size,
     distributorCount: a.distributors.length,
     ddTypes:          Array.from(a.ddTypes),
     tsoes:            Array.from(a.tsoes),
-  }))
+  }));
 }
 
 /** Get all TSOEs with their distributors */
@@ -328,6 +337,7 @@ function getAllTsoes() {
       tsoes.set(key, {
         tsoeName:     key,
         asmName:      e.asmName  || '',
+        asmArea:      e.asmArea  || '',   // ← stable area reference (Change 1)
         region:       e.region   || '',
         clusterName:  e.clusterName || '',
         distributors: [],
@@ -373,7 +383,7 @@ function buildHierarchyTree() {
   for (const e of hierarchyEntries) {
     const zone    = e.region      || '(unassigned zone)';
     const cluster = e.clusterName || '(unassigned cluster)';
-    const asm     = e.asmName     || '(unassigned ASM)';
+    const asm     = e.asmArea     || '(unassigned ASM)';   // ← stable key (Change 1)
     const ddType  = e.ddType      || '(unassigned DD type)';
     const tsoe    = e.tsoeName    || '(unassigned TSOE)';
 
@@ -383,9 +393,9 @@ function buildHierarchyTree() {
     if (!clusterMap.has(cluster)) clusterMap.set(cluster, new Map());
     const asmMap = clusterMap.get(cluster);
 
-    if (!asmMap.has(asm)) asmMap.set(asm, { asmArea: e.asmArea || '', ddTypes: new Map() });
+    if (!asmMap.has(asm)) asmMap.set(asm, { asmArea: asm, asmNames: new Set(), ddTypes: new Map() });
     const asmEntry = asmMap.get(asm);
-    if (!asmEntry.asmArea && e.asmArea) asmEntry.asmArea = e.asmArea;
+    if (e.asmName) asmEntry.asmNames.add(e.asmName);   // accumulate person-names (Change 1)
 
     if (!asmEntry.ddTypes.has(ddType)) asmEntry.ddTypes.set(ddType, new Map());
     const tsoeMap = asmEntry.ddTypes.get(ddType);
@@ -405,8 +415,12 @@ function buildHierarchyTree() {
     const zoneNode = { zone, clusters: [] };
     for (const [clusterName, asmMap] of clusterMap) {
       const clusterNode = { clusterName, asms: [] };
-      for (const [asmName, asmData] of asmMap) {
-        const asmNode = { asmName, asmArea: asmData.asmArea, ddTypes: [] };
+      for (const [asmArea, asmData] of asmMap) {
+        const asmNode = {
+          asmArea,                                              // the stable identity (Change 1)
+          asmNames: Array.from(asmData.asmNames).filter(Boolean), // current/past holders
+          ddTypes: [],
+        };
         for (const [ddType, tsoeMap] of asmData.ddTypes) {
           const ddTypeNode = { ddType, tsoes: [] };
           for (const [tsoeName, distributors] of tsoeMap) {
@@ -432,7 +446,7 @@ function getAllClusters() {
       clusters.set(key, { clusterName: key, region: e.region || '', asms: new Set(), distributors: 0 });
     }
     const c = clusters.get(key);
-    if (e.asmName) c.asms.add(e.asmName);
+    if (e.asmArea) c.asms.add(e.asmArea);   // count distinct Areas (Change 1)
     c.distributors++;
   }
   return Array.from(clusters.values()).map(c => ({
