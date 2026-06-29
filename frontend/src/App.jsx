@@ -15,7 +15,8 @@ export default function App() {
       <Sidebar />
       <main className="flex-1 ml-16 lg:ml-56 min-h-screen">
         <Routes>
-          <Route path="/"           element={<Dashboard />} />
+          <Route path="/"           element={<HierarchyPage />} />
+          <Route path="/dashboard"  element={<Dashboard />} />
           <Route path="/devices"    element={<DevicesPage />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
           <Route path="/routes"     element={<RoutesPage />} />

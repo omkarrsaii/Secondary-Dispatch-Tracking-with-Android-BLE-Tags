@@ -470,7 +470,7 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
 
 /* ── Main page ──────────────────────────────────────────────────────── */
 export default function HierarchyPage() {
-  const [tab, setTab]           = useState('tree')
+  const [tab, setTab]           = useState('performance')
   const [tree, setTree]         = useState(null)
   const [loading, setLoading]   = useState(true)
   const [syncing, setSyncing]   = useState(false)
@@ -502,7 +502,7 @@ export default function HierarchyPage() {
       <div className="p-6 space-y-6 animate-fade-in">
         {/* Tab switcher */}
         <div className="flex rounded-xl border border-m-border overflow-hidden w-fit bg-m-surface shadow-card">
-          {[{key:'tree',label:'Tree',icon:Building2},{key:'performance',label:'Performance',icon:BarChart3}].map(({key,label,icon:Icon}) => (
+          {[{key:'performance',label:'Performance',icon:BarChart3},{key:'tree',label:'Tree',icon:Building2}].map(({key,label,icon:Icon}) => (
             <button key={key} onClick={() => setTab(key)}
               className={`flex items-center gap-1.5 px-5 py-2.5 text-sm font-semibold transition-colors ${tab===key ? 'text-white' : 'text-m-muted hover:bg-m-bg'}`}
               style={tab===key ? { background:MB } : {}}>
@@ -510,6 +510,9 @@ export default function HierarchyPage() {
             </button>
           ))}
         </div>
+
+        {/* Performance */}
+        {tab === 'performance' && <PerformancePanel clusters={clusterNames} asmsFlat={asmsFlat} tsoesFlat={tsoesFlat} />}
 
         {/* Stats bar */}
         {tab === 'tree' && (
@@ -543,9 +546,6 @@ export default function HierarchyPage() {
             </div>
           </div>
         )}
-
-        {/* Performance */}
-        {tab === 'performance' && <PerformancePanel clusters={clusterNames} asmsFlat={asmsFlat} tsoesFlat={tsoesFlat} />}
       </div>
 
       {selected && <DistributorFlyout code={selected} onClose={() => setSelected(null)} />}

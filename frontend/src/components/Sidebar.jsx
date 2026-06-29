@@ -8,10 +8,10 @@ const MARICO_BLUE = '#1467B2'
 const MARICO_GREEN = '#7DC242'
 
 const navItems = [
-  { to: '/',          icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/',          icon: Building2,       label: 'Hierarchy' },
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/devices',   icon: Smartphone,      label: 'Devices'   },
   { to: '/routes',    icon: Route,           label: 'Routes'    },
-  { to: '/hierarchy', icon: Building2,       label: 'Hierarchy' },
   { to: '/search',    icon: Search,          label: 'Search'    },
   { to: '/history',   icon: History,         label: 'History'   },
   { to: '/settings',  icon: Settings,        label: 'Settings'  },
