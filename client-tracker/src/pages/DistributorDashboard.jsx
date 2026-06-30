@@ -1,11 +1,44 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getDistributorInvoices } from '../distributorApi'
-import { Package, MapPin, Truck, ChevronRight, LogOut, FileText } from 'lucide-react'
 
-const MB = '#1467B2'
-const MG = '#7DC242'
+const MB    = '#1467B2'
+const MG    = '#7DC242'
 const MG_DK = '#5E9F2B'
-const TEAL = '#0B6FCB'
+const TEAL  = '#0B6FCB'
+
+/* ── Inline icons (no external icon package needed) ───────────────── */
+const IconPackage = (p) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+    <path d="M20 7H4a2 2 0 00-2 2v6a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/>
+    <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>
+  </svg>
+)
+const IconMapPin = (p) => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" {...p}>
+    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
+  </svg>
+)
+const IconTruck = (p) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+    <path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+  </svg>
+)
+const IconChevronRight = (p) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+    <polyline points="9 18 15 12 9 6"/>
+  </svg>
+)
+const IconLogOut = (p) => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+  </svg>
+)
+const IconFileText = (p) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+    <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+  </svg>
+)
 
 function VehicleStatusBadge({ status }) {
   if (status === 'Assigned') {
@@ -39,7 +72,7 @@ function DistanceBadge({ distanceMeters, reached }) {
     : `${distanceMeters} m away`
   return (
     <span className="flex items-center gap-1 text-[11px] font-mono text-slate">
-      <MapPin size={10} style={{ color: MG }} />
+      <IconMapPin style={{ color: MG }} />
       {label}
     </span>
   )
@@ -106,7 +139,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
             onClick={onSignOut}
             className="ml-auto flex items-center gap-1.5 text-xs text-slate hover:text-bad transition-colors px-2 py-1 rounded-lg hover:bg-bad/8"
           >
-            <LogOut size={12} />
+            <IconLogOut />
             Sign out
           </button>
         </div>
@@ -125,13 +158,13 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3 mb-5 animate-fade-up" style={{ animationDelay: '0.05s' }}>
           {[
-            { label: 'Active Invoices',   value: totalActiveInvoices, icon: FileText, color: MB,    bg: '#EBF3FF' },
-            { label: 'Vehicles Assigned', value: assigned,            icon: Truck,    color: MG_DK, bg: '#F0F9E8' },
-            { label: 'Reached',           value: reached,             icon: MapPin,   color: TEAL,  bg: '#EBF3FF' },
-          ].map(({ label, value, icon: Icon, color, bg }) => (
+            { label: 'Active Invoices',   value: totalActiveInvoices, Icon: IconFileText, color: MB,    bg: '#EBF3FF' },
+            { label: 'Vehicles Assigned', value: assigned,            Icon: IconTruck,    color: MG_DK, bg: '#F0F9E8' },
+            { label: 'Reached',           value: reached,             Icon: IconMapPin,   color: TEAL,  bg: '#EBF3FF' },
+          ].map(({ label, value, Icon, color, bg }) => (
             <div key={label} className="bg-white rounded-xl border border-rim shadow-card p-3.5">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-2" style={{ background: bg }}>
-                <Icon size={15} style={{ color }} />
+                <Icon style={{ color, width:15, height:15 }} />
               </div>
               <p className="text-xl font-extrabold leading-none mb-1" style={{ color }}>{value ?? '—'}</p>
               <p className="text-[10px] text-slate font-semibold uppercase tracking-wide leading-tight">{label}</p>
@@ -149,7 +182,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
         <div className="bg-white rounded-xl border border-rim shadow-card overflow-hidden animate-fade-up"
              style={{ animationDelay: '0.1s' }}>
           <div className="px-5 py-3.5 border-b border-rim flex items-center gap-2">
-            <Package size={14} style={{ color: MB }} />
+            <IconPackage style={{ color: MB }} />
             <h2 className="text-sm font-bold" style={{ color: MB }}>Active Invoices</h2>
             <span className="ml-auto text-[11px] text-slate font-mono">{invoices.length} of {totalActiveInvoices}</span>
           </div>
@@ -160,7 +193,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
             </div>
           ) : invoices.length === 0 ? (
             <div className="py-14 text-center">
-              <Package size={24} className="mx-auto mb-3 text-rim" />
+              <IconPackage style={{ width:24, height:24, color:'#CBD5E1', margin:'0 auto 12px' }} />
               <p className="text-sm text-slate font-medium">No active invoices</p>
             </div>
           ) : (
@@ -173,7 +206,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
                 >
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
                        style={{ background: '#EBF3FF' }}>
-                    <FileText size={14} style={{ color: MB }} />
+                    <IconFileText style={{ color: MB }} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="font-bold text-sm font-mono" style={{ color: MB }}>{inv.invoiceNo}</p>
@@ -183,7 +216,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
                     <VehicleStatusBadge status={inv.vehicleStatus} />
                     <DistanceBadge distanceMeters={inv.distanceMeters} reached={inv.reached} />
                   </div>
-                  <ChevronRight size={14} className="text-rim group-hover:text-slate transition-colors flex-shrink-0" />
+                  <IconChevronRight className="text-rim group-hover:text-slate transition-colors flex-shrink-0" />
                 </button>
               ))}
             </div>
