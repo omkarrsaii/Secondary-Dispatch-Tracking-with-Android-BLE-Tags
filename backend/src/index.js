@@ -51,16 +51,23 @@ const { startMasterDataSync }  = require('./services/masterDataService');
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
-// ─── CORS ─────────────────────────────────────────────────────────────────────
+function normalizeOrigin(o) {
+  return o.trim().replace(/\/+$/, '').replace(/:+$/, '');
+}
+
 const allowedOrigins = [
   process.env.FRONTEND_URL       || 'http://localhost:5173',
   process.env.CLIENT_TRACKER_URL || 'http://localhost:5174',
-].filter(Boolean).map(o => o.trim().replace(/:+$/, ''));
+].filter(Boolean).map(normalizeOrigin);
 
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (allowedOrigins.includes(normalizeOrigin(origin))) return callback(null, true);
+    logger.warn(
+      `CORS: origin "${origin}" not allowed. Allowed origins: ${allowedOrigins.join(', ')}. ` +
+      `If this should be allowed, check FRONTEND_URL / CLIENT_TRACKER_URL in your .env file.`
+    );
     callback(new Error(`CORS: origin "${origin}" not allowed`));
   },
   credentials: true,
