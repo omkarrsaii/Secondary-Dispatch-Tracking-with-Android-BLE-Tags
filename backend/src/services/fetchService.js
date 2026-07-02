@@ -28,9 +28,9 @@ async function runFetch() {
       try {
         const geo = device.latitude && device.longitude
           ? await reverseGeocode(device.latitude, device.longitude)
-          : { city: null, state: null, country: null };
+          : { locality: null, city: null, state: null, country: null };
 
-        const deviceData = { ...device, city: geo.city, state: geo.state, country: geo.country };
+        const deviceData = { ...device, locality: geo.locality, city: geo.city, state: geo.state, country: geo.country };
         const deviceId = upsertDevice(deviceData);
         insertHistory(deviceId, {
           latitude: device.latitude,

@@ -35,7 +35,7 @@ const geocodeAgent = GEOCODE_IGNORE_SSL
 const geocodeCache = new Map();
 
 async function reverseGeocode(lat, lng) {
-  if (!lat || !lng) return { city: null, state: null, country: null };
+  if (!lat || !lng) return { locality: null, city: null, state: null, country: null };
 
   const key = `${parseFloat(lat).toFixed(4)},${parseFloat(lng).toFixed(4)}`;
   if (geocodeCache.has(key)) return geocodeCache.get(key);
@@ -59,7 +59,17 @@ async function reverseGeocode(lat, lng) {
     });
 
     const addr   = response.data?.address || {};
+    // Most-specific-first — Nominatim puts the actual named locality/area
+    // (e.g. "Begumpet", "Kompally", "Gachibowli") under one of these keys
+    // depending on how that area is mapped in OSM. `city` alone collapses
+    // an entire metro area down to one name, which is too coarse for
+    // "where is this vehicle right now" — so locality is preferred
+    // wherever available, with city only as the fallback.
+    const locality = addr.neighbourhood || addr.suburb || addr.quarter ||
+                      addr.residential  || addr.city_district || addr.hamlet ||
+                      addr.locality     || null;
     const result = {
+      locality,
       city:    addr.city || addr.town || addr.village || addr.county || null,
       state:   addr.state   || null,
       country: addr.country || null,
@@ -67,12 +77,12 @@ async function reverseGeocode(lat, lng) {
     };
 
     geocodeCache.set(key, result);
-    logger.info(`Geocoded ${lat},${lng} → ${result.city}, ${result.state}`);
+    logger.info(`Geocoded ${lat},${lng} → ${result.locality || '(no locality)'}, ${result.city}, ${result.state}`);
     return result;
 
   } catch (err) {
     logger.error(`Geocoding failed for ${lat},${lng}: ${err.message}`);
-    return { city: null, state: null, country: null };
+    return { locality: null, city: null, state: null, country: null };
   }
 }
 

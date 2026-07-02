@@ -33,6 +33,34 @@ const { getDistanceInKm } = require('../utils/geoUtils');
 
 const GEOFENCE_RADIUS_METERS = parseInt(process.env.GEOFENCE_RADIUS_METERS) || 500;
 
+// ── Hub location (Change: dynamic Active Invoice status) ──────────────────────
+// Same HUB_LAT/HUB_LON convention already used by dashboardRoutes.js and
+// routeRoutes.js for "is this vehicle out for delivery" — reused here so the
+// Hierarchy Active Invoice List's "At Hub" status agrees with the rest of
+// the app instead of re-deriving its own hub coordinates.
+const HUB_LAT = parseFloat(process.env.HUB_LAT || '17.608504');
+const HUB_LON = parseFloat(process.env.HUB_LON || '78.528605');
+const HUB_RADIUS_METERS = parseInt(process.env.HUB_RADIUS_METERS) || 1000; // 1 km
+
+/**
+ * Distance (in meters) between a vehicle's latest known tag location and
+ * the hub — or null if the vehicle has no mapped device, or the device has
+ * never reported coordinates.
+ */
+function getDistanceToHubMeters(vehicleNo) {
+  if (!vehicleNo) return null;
+  const deviceName = mapping.getDeviceByVehicle(vehicleNo);
+  if (!deviceName) return null;
+
+  const device = getDeviceByName(deviceName);
+  if (!device || !device.latitude || !device.longitude) return null;
+
+  const km = getDistanceInKm(
+    parseFloat(device.latitude), parseFloat(device.longitude), HUB_LAT, HUB_LON
+  );
+  return km * 1000;
+}
+
 /**
  * Distance (in meters) between an invoice's vehicle's latest tag location
  * and its distributor's location — or null if either piece is missing
@@ -141,5 +169,7 @@ module.exports = {
   runGeofenceCheck,
   getDistanceMetersFor,
   getInvoiceDistanceMeters,
+  getDistanceToHubMeters,
   GEOFENCE_RADIUS_METERS,
+  HUB_RADIUS_METERS,
 };

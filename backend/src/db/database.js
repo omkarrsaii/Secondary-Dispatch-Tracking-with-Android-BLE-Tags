@@ -28,6 +28,7 @@ function initSchema() {
       device_name TEXT NOT NULL UNIQUE,
       latitude TEXT,
       longitude TEXT,
+      locality TEXT,
       city TEXT,
       state TEXT,
       country TEXT,
@@ -62,6 +63,15 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_device_history_captured_at ON device_history(captured_at);
   `);
 
+  // ── Migration: add devices.locality to DBs created before this column
+  // existed. SQLite has no "ADD COLUMN IF NOT EXISTS", so check first —
+  // safe to run on every startup, no-op once the column is present.
+  const deviceCols = database.prepare("PRAGMA table_info(devices)").all().map(c => c.name);
+  if (!deviceCols.includes('locality')) {
+    database.exec('ALTER TABLE devices ADD COLUMN locality TEXT');
+    logger.info('Database migration: added devices.locality column');
+  }
+
   logger.info('Database schema initialized');
 }
 
@@ -74,23 +84,23 @@ function upsertDevice(device) {
   if (existing) {
     database.prepare(`
       UPDATE devices SET
-        latitude = ?, longitude = ?, city = ?, state = ?, country = ?,
+        latitude = ?, longitude = ?, locality = ?, city = ?, state = ?, country = ?,
         battery = ?, network = ?, last_seen_text = ?, image_url = ?,
         last_fetch_time = ?, updated_at = ?
       WHERE device_name = ?
     `).run(
-      device.latitude, device.longitude, device.city, device.state, device.country,
+      device.latitude, device.longitude, device.locality, device.city, device.state, device.country,
       device.battery, device.network, device.last_seen_text, device.image_url,
       now, now, device.device_name
     );
     return existing.id;
   } else {
     const result = database.prepare(`
-      INSERT INTO devices (device_name, latitude, longitude, city, state, country,
+      INSERT INTO devices (device_name, latitude, longitude, locality, city, state, country,
         battery, network, last_seen_text, image_url, last_fetch_time, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      device.device_name, device.latitude, device.longitude, device.city,
+      device.device_name, device.latitude, device.longitude, device.locality, device.city,
       device.state, device.country, device.battery, device.network,
       device.last_seen_text, device.image_url, now, now, now
     );

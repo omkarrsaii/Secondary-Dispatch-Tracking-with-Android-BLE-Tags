@@ -248,6 +248,8 @@ async function fetchInvoiceMappings() {
     timestamp:       findColIndex(headers, 'timestamp'),
     // ── Added for ASM/TSOE Performance KPIs — purely additive, existing fields above unchanged ──
     appointmentDate: findColIndex(headers, 'appointment date', 'appointment'),
+    // ── Added for Dispatch Date / Age column (Sheet Column S) — purely additive ──
+    dispatchDate:    findColIndex(headers, 'dispatch date'),
   };
 
   // Remember exactly where Status (and Timestamp) live for write-back (geofencing).
@@ -287,6 +289,8 @@ async function fetchInvoiceMappings() {
       remarks:         idx.remarks         >= 0 ? String(row[idx.remarks]         || '').trim() : '',
       timestamp:       idx.timestamp       >= 0 ? String(row[idx.timestamp]       || '').trim() : '',
       appointmentDate: idx.appointmentDate >= 0 ? String(row[idx.appointmentDate] || '').trim() : '',
+      // ── Added for Dispatch Date / Age column — actual vehicle dispatch date (Column S) ──
+      dispatchDate:    idx.dispatchDate    >= 0 ? String(row[idx.dispatchDate]    || '').trim() : '',
       // ── Added for geofencing write-back — the exact sheet row (1-indexed) this came from ──
       sheetRowNumber:  i + 1,
     });

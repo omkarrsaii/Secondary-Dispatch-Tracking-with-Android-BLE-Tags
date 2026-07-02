@@ -71,6 +71,7 @@ function getInvoiceLiveTracking(vehicleNo, vehicleDevMap, deviceMap) {
     longitude: hasCoords ? parseFloat(device.longitude) : null,
     lastSeen:  device.last_seen_text || null,
     battery:   device.battery        || null,
+    locality:  device.locality       || null,
     city:      device.city           || null,
     state:     device.state          || null,
     mapsUrl:   hasCoords
@@ -309,20 +310,23 @@ router.get('/kpis/tsoe/:name', (req, res) => {
 });
 
 // ─── GET /api/hierarchy/invoices ──────────────────────────────────────────────
-// Hierarchy-aware Active Invoice List.
+// Hierarchy-aware Invoice List — backs both the "Active Invoices" and
+// "All Invoices" views.
 // Query params: scope ('cluster'|'asm'|'tsoe'), name, dateFrom, dateTo,
-// distributorCode, invoiceState ('all'|'active'|'overdue').
+// distributorCode, invoiceState ('all'|'active'|'overdue'),
+// view ('active'|'all' — default 'active').
 
 router.get('/invoices', (req, res) => {
   try {
-    const { scope, name, dateFrom, dateTo, distributorCode, invoiceState } = req.query;
+    const { scope, name, dateFrom, dateTo, distributorCode, invoiceState, view } = req.query;
     if (!scope || !name) {
       return res.status(400).json({ error: 'MISSING_PARAMS', message: '"scope" and "name" are required.' });
     }
-    const rows = kpi.getActiveInvoiceList({
+    const rows = kpi.getInvoiceList({
       scope,
       name,
       filters: { dateFrom, dateTo, distributorCode, invoiceState },
+      view: view === 'all' ? 'all' : 'active',
     });
     if (rows === null) {
       return res.status(404).json({

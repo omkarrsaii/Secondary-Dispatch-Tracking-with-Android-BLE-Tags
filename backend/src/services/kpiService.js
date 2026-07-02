@@ -16,8 +16,10 @@
 
 const logger = require('../utils/logger');
 const md     = require('./masterDataService');
-const { getAllInvoiceMappings } = require('./mappingService');
+const { getAllInvoiceMappings, getDeviceByVehicle } = require('./mappingService');
+const { getDeviceByName } = require('../db/database');
 const { isActiveInvoice, toComparableDate } = require('./distributorPortalService');
+const geofence = require('./geofenceService');
 
 // Start of "today" (local server time) — used for the overdue check.
 function startOfTodayMs() {
@@ -148,27 +150,99 @@ function getKpisForCluster(clusterName, filters = {}) {
 }
 
 /**
- * Builds one Active Invoice List row.
+ * Live "where is this vehicle right now" label for the Location column —
+ * always reads the CURRENT devices row (no extra caching layer here), so
+ * it reflects whatever fetchService's most recent BLE/GPS fetch cycle
+ * wrote to the DB. Prefers the granular locality/area (e.g. "Begumpet",
+ * "Gachibowli") over the city, since a bare city name is too coarse to be
+ * useful for "where is my delivery right now".
+ */
+function getLiveLocationLabel(vehicleNo) {
+  if (!vehicleNo) return null;
+  const deviceName = getDeviceByVehicle(vehicleNo);
+  if (!deviceName) return null;
+  const device = getDeviceByName(deviceName);
+  if (!device) return null;
+  return device.locality || device.city || null;
+}
+
+/**
+ * Derives a live, location-based status label for an ACTIVE invoice (one
+ * whose raw sheet Status cell is still blank) using the vehicle's latest
+ * BLE/GPS position:
  *
- * Status shown here is a DERIVED label, not the raw sheet Status column —
- * active invoices always have a blank Status cell by definition, so
- * showing that blank would be useless. Instead this shows "Overdue" (past
- * Appointment Date) or "Pending" (still within its appointment window).
+ *   - "At Hub"     — vehicle is within HUB_RADIUS_METERS (1km) of the hub.
+ *   - "Reached"    — vehicle is within GEOFENCE_RADIUS_METERS (500m) of
+ *                    the distributor location.
+ *   - "In Transit" — neither of the above (out of the hub geofence, not
+ *                    yet within the distributor geofence).
+ *   - "In Transit" is also the fallback when there's no live location yet
+ *     (no device mapped / device hasn't reported coordinates) — a
+ *     dispatched invoice with no fix is presumed en route rather than
+ *     shown as "at hub".
  *
- * lastUpdated uses Invoice Date — the sheet has no distinct "last
- * modified" timestamp column. If Vehicle Dispatch Date would be a more
- * meaningful "last touched" signal, flag it and it can be added.
+ * Distributor proximity is checked first: a vehicle can only be "at hub"
+ * OR "reached" at any given moment, and reaching the destination is the
+ * more specific, more useful signal to surface.
+ */
+function deriveLiveStatus(vehicleNo, distributorCode) {
+  const distanceToDistributor = geofence.getDistanceMetersFor(vehicleNo, distributorCode);
+  if (distanceToDistributor != null && distanceToDistributor <= geofence.GEOFENCE_RADIUS_METERS) {
+    return { label: 'Reached', distanceToHub: null, distanceToDistributor };
+  }
+
+  const distanceToHub = geofence.getDistanceToHubMeters(vehicleNo);
+  if (distanceToHub != null && distanceToHub <= geofence.HUB_RADIUS_METERS) {
+    return { label: 'At Hub', distanceToHub, distanceToDistributor };
+  }
+
+  return { label: 'In Transit', distanceToHub, distanceToDistributor };
+}
+
+/**
+ * Builds one Invoice List row (shared by both the Active Invoices and All
+ * Invoices views).
  *
- * ageDays = days since Invoice Date, i.e. how long this invoice has been
- * sitting active. Invoices with no parseable Invoice Date show null.
+ * Status:
+ *   - Active invoices (blank Status AND blank Remarks in the sheet) show a
+ *     DERIVED, live location-based label — "At Hub" / "In Transit" /
+ *     "Reached" — via deriveLiveStatus(), instead of a static "Pending".
+ *   - Non-active (historical/completed) invoices show the ACTUAL raw sheet
+ *     Status value as-is (e.g. "Reached", "Unloaded") — these only ever
+ *     appear in the All Invoices view.
+ *
+ * lastUpdated uses Invoice Date (Sheet Column B) — the date the invoice
+ * record was created/added. Unchanged from before; do not repoint this to
+ * Dispatch Date.
+ *
+ * dispatchDate is the actual vehicle dispatch date (Sheet Column S).
+ * ageDays = days since Dispatch Date (Current Date − Dispatch Date), i.e.
+ * how long the vehicle has been on the road. Invoices with no parseable
+ * Dispatch Date show ageDays = null (rendered as "--" by the frontend).
+ *
+ * location is the Location column: "Reached" once status is "Reached"
+ * (live or historical), otherwise the vehicle's current live
+ * locality/area — always read fresh from the devices table, never a
+ * value cached in this service.
  */
 function enrichInvoiceRow(m, todayMs) {
   const hier   = md.getDistributorHierarchy(m.distributorCode) || {};
   const apptMs = m.appointmentDate ? toComparableDate(m.appointmentDate) : 0;
   const isOverdue = apptMs > 0 && apptMs < todayMs;
 
-  const invMs   = toComparableDate(m.invoiceDate);
-  const ageDays = invMs > 0 ? Math.floor((todayMs - invMs) / 86400000) : null;
+  const active = isActiveInvoice(m.status, m.remarks);
+  const live   = active ? deriveLiveStatus(m.vehicleNo, m.distributorCode) : null;
+  const status = active ? live.label : (m.status || 'Reached');
+
+  // Location column: "Reached" once the delivery has arrived (whether
+  // that's the live geofence-derived label or the historical sheet
+  // status), otherwise the vehicle's current live locality.
+  const location = status === 'Reached'
+    ? 'Reached'
+    : (getLiveLocationLabel(m.vehicleNo) || (m.vehicleNo ? 'Location unavailable' : '—'));
+
+  const dispatchMs = m.dispatchDate ? toComparableDate(m.dispatchDate) : 0;
+  const ageDays    = dispatchMs > 0 ? Math.floor((todayMs - dispatchMs) / 86400000) : null;
 
   return {
     invoiceNo:       m.invoiceNo,
@@ -176,28 +250,41 @@ function enrichInvoiceRow(m, todayMs) {
     tsoeName:        hier.tsoeName || '', // "HQ" in the UI
     distributorCode: m.distributorCode,
     distributorName: m.distributorName || hier.distributorName || '',
-    status:          isOverdue ? 'Overdue' : 'Pending',
+    isActive:        active,
+    status,
+    location,
     isOverdue,
+    distanceToHub:         live ? live.distanceToHub : null,
+    distanceToDistributor: live ? live.distanceToDistributor : null,
     vehicleNo:       m.vehicleNo || null,
     vehicleStatus:   m.vehicleNo ? 'Assigned' : 'Not Assigned',
     invoiceDate:     m.invoiceDate || null,
     appointmentDate: m.appointmentDate || null,
-    lastUpdated:     m.invoiceDate || null,
+    lastUpdated:     m.invoiceDate || null,     // Sheet Column B — unchanged
+    dispatchDate:    m.dispatchDate || null,    // Sheet Column S
     ageDays,
   };
 }
 
 /**
- * Hierarchy-aware Active Invoice List.
+ * Hierarchy-aware Invoice List — backs both the "Active Invoices" and
+ * "All Invoices" views.
  *
  * scope: 'cluster' | 'asm' | 'tsoe', name: the cluster/ASM/TSOE name.
  * filters: { dateFrom, dateTo, distributorCode, invoiceState }
  *   - dateFrom/dateTo/distributorCode narrow the SAME base set the KPI
  *     cards use, so the two stay consistent with each other.
- *   - invoiceState ('all' | 'active' | 'overdue') is a sub-filter that
- *     ONLY applies to this list, never to the KPI cards above it.
+ *   - invoiceState ('all' | 'active' | 'overdue') is a sub-filter (based
+ *     on Appointment Date vs today) that applies identically in both
+ *     views, never to the KPI cards above it.
+ * view: 'active' (default) — only currently-active deliveries, same rule
+ *       (blank Status AND blank Remarks) used everywhere else in the app.
+ *       'all' — every invoice matching the scope/filters, active and
+ *       historical alike. Historical rows show their actual sheet Status
+ *       (e.g. "Reached"); active rows still get the live location-derived
+ *       status.
  */
-function getActiveInvoiceList({ scope, name, filters = {} }) {
+function getInvoiceList({ scope, name, filters = {}, view = 'active' }) {
   let codes = null;
 
   if (scope === 'cluster') {
@@ -217,16 +304,27 @@ function getActiveInvoiceList({ scope, name, filters = {} }) {
   let   group    = all.filter(m => codesSet.has(String(m.distributorCode || '').trim()));
   group          = applyFilters(group, filters);
 
-  const active = group.filter(m => isActiveInvoice(m.status, m.remarks));
+  const isAllView = view === 'all';
+  const base = isAllView ? group : group.filter(m => isActiveInvoice(m.status, m.remarks));
 
   const today = startOfTodayMs();
-  let rows = active.map(m => enrichInvoiceRow(m, today));
+  let rows = base.map(m => enrichInvoiceRow(m, today));
 
+  // invoiceState sub-filter (On-Time / Overdue) applies identically in
+  // both views — Appointment Date vs today is independent of whether the
+  // invoice is still active, so this stays consistent for the person
+  // switching between Active Invoices and All Invoices.
   if (filters.invoiceState === 'overdue') rows = rows.filter(r => r.isOverdue);
   else if (filters.invoiceState === 'active') rows = rows.filter(r => !r.isOverdue);
 
   rows.sort((a, b) => toComparableDate(b.invoiceDate) - toComparableDate(a.invoiceDate));
   return rows;
+}
+
+// Backward-compatible name — existing callers (and the route) can keep
+// using this; it's just getInvoiceList() pinned to the active view.
+function getActiveInvoiceList({ scope, name, filters = {}, view }) {
+  return getInvoiceList({ scope, name, filters, view: view || 'active' });
 }
 
 /**
@@ -250,6 +348,7 @@ module.exports = {
   getKpisForAsm,
   getKpisForTsoe,
   getKpisForCluster,
+  getInvoiceList,
   getActiveInvoiceList,
   getInvoiceDetail,
 };

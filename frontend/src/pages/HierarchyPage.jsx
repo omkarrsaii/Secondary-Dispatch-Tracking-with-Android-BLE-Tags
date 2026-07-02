@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Building2, AlertCircle, Layers, FileText, BarChart3, TrendingUp, Users, CheckCircle2, Clock, Filter, X, MapPin } from 'lucide-react'
+import { ChevronRight, ChevronDown, Building2, AlertCircle, Layers, FileText, BarChart3, TrendingUp, Users, CheckCircle2, Clock, Filter, X, MapPin, RefreshCw } from 'lucide-react'
 import Header from '../components/Header'
 import {
   getHierarchyTree, syncHierarchy, getDistributorDetail,
   getClusterKpis, getAsmKpis, getTsoeKpis,
   getActiveInvoiceList, getInvoiceTrackingDetail, getDistributors,
+  triggerRefreshSync,
 } from '../lib/api'
 
 const MB = '#1467B2'
@@ -33,6 +34,24 @@ function VehicleStatusPill({ status }) {
     </span>
   )
   return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-m-bg border border-m-border text-m-muted">Not Assigned</span>
+}
+
+// Live, location-derived status pill for the Invoice List — "At Hub" /
+// "In Transit" / "Reached" for active invoices, or the raw historical
+// sheet status (e.g. "Reached", "Unloaded") for completed rows in the
+// All Invoices view.
+const STATUS_STYLES = {
+  'At Hub':     { bg:'rgba(11,111,203,.10)',  color:TEAL,  border:'rgba(11,111,203,.25)' },
+  'In Transit': { bg:'rgba(217,119,6,.10)',   color:AMBER, border:'rgba(217,119,6,.25)' },
+  'Reached':    { bg:'rgba(94,159,43,.12)',   color:MG_DK, border:'rgba(94,159,43,.25)' },
+}
+function InvoiceStatusPill({ status }) {
+  const s = STATUS_STYLES[status] || { bg:'rgba(100,116,139,.10)', color:'#64748B', border:'rgba(100,116,139,.25)' }
+  return (
+    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full border" style={{ background:s.bg, color:s.color, borderColor:s.border }}>
+      {status || '—'}
+    </span>
+  )
 }
 
 function Spinner() {
@@ -145,7 +164,7 @@ function InvoiceTrackingModal({ invoiceNo, onClose }) {
           {detail && !loading && !error && (
             <div className="space-y-3">
               <div className="flex justify-center py-1"><VehicleStatusPill status={detail.vehicleStatus} /></div>
-              {[['Distributor',`${detail.distributorName||''} ${detail.distributorCode?`(${detail.distributorCode})`:''}`],['ASM Area',detail.asmArea],['HQ',detail.tsoeName],['Status',detail.status],['Vehicle No.',detail.vehicleNo||'—'],['Invoice Date',formatInvoiceDate(detail.invoiceDate)],['Appt. Date',formatInvoiceDate(detail.appointmentDate)],['Age',detail.ageDays!=null?`${detail.ageDays} day(s)`:null]]
+              {[['Distributor',`${detail.distributorName||''} ${detail.distributorCode?`(${detail.distributorCode})`:''}`],['ASM Area',detail.asmArea],['HQ',detail.tsoeName],['Status',detail.status],['Vehicle No.',detail.vehicleNo||'—'],['Invoice Date',formatInvoiceDate(detail.invoiceDate)],['Appt. Date',formatInvoiceDate(detail.appointmentDate)],['Dispatch Date',detail.dispatchDate?formatInvoiceDate(detail.dispatchDate):null],['Age',detail.ageDays!=null?`${detail.ageDays} Days`:'--']]
                 .filter(([,v])=>v).map(([label,value])=>(
                   <div key={label} className="flex items-start justify-between border-b border-m-border/50 pb-2">
                     <span className="text-xs text-m-muted">{label}</span>
@@ -156,6 +175,7 @@ function InvoiceTrackingModal({ invoiceNo, onClose }) {
                 <div className="rounded-xl border border-m-border bg-m-bg p-3 space-y-2 mt-1">
                   <p className="text-[10px] text-m-muted uppercase tracking-widest font-semibold">Live Location</p>
                   {detail.tracking.lastSeen && <div className="flex items-start justify-between"><span className="text-xs text-m-muted">Last Seen</span><span className="text-xs text-m-text">{detail.tracking.lastSeen}</span></div>}
+                  {(detail.tracking.locality || detail.tracking.city) && <div className="flex items-start justify-between"><span className="text-xs text-m-muted">Location</span><span className="text-xs text-m-text">{[detail.tracking.locality||detail.tracking.city, detail.tracking.state].filter(Boolean).join(', ')}</span></div>}
                   {detail.tracking.latitude != null && <div className="flex items-start justify-between"><span className="text-xs text-m-muted">Coordinates</span><span className="text-xs font-mono text-m-text">{detail.tracking.latitude.toFixed(5)}, {detail.tracking.longitude.toFixed(5)}</span></div>}
                   {detail.tracking.battery && <div className="flex items-start justify-between"><span className="text-xs text-m-muted">Battery</span><span className="text-xs text-m-text">{detail.tracking.battery}</span></div>}
                   {detail.tracking.mapsUrl && (
@@ -311,12 +331,32 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
   const [dateTo, setDateTo]     = useState('')
   const [distributorFilter, setDistributorFilter] = useState('')
   const [invoiceState, setInvoiceState] = useState('all')
+  const [invoiceView, setInvoiceView] = useState('active') // 'active' | 'all'
   const [distributorOptions, setDistributorOptions] = useState([])
   const [kpis, setKpis]         = useState(null)
   const [invoices, setInvoices] = useState([])
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState(null)
   const [trackingInvoice, setTrackingInvoice] = useState(null)
+  const [locationsRefreshing, setLocationsRefreshing] = useState(false)
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  // Pull the freshest BLE/GPS fix for every device before showing the
+  // list — the dashboard should never just display whatever was last
+  // cached from a scheduled poll. Runs once when the panel mounts (i.e.
+  // every time someone lands on/returns to the Performance tab) and again
+  // whenever "Refresh Locations" is clicked. Best-effort: if a fetch is
+  // already running elsewhere, or the Find Hub session isn't available,
+  // this silently falls back to whatever's currently in the DB rather
+  // than blocking the page.
+  const refreshLiveLocations = useCallback(() => {
+    setLocationsRefreshing(true)
+    triggerRefreshSync()
+      .catch(() => { /* best-effort — fall back to last-known data */ })
+      .finally(() => { setLocationsRefreshing(false); setRefreshTick(t => t + 1) })
+  }, [])
+
+  useEffect(() => { refreshLiveLocations() }, [refreshLiveLocations])
 
   useEffect(() => { if (!selectedCluster && clusters.length) setSelectedCluster(clusters[0]) }, [clusters, selectedCluster])
 
@@ -344,11 +384,11 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
     setLoading(true); setError(null)
     const fp = { dateFrom:dateFrom||undefined, dateTo:dateTo||undefined, distributorCode:distributorFilter||undefined }
     const kpiFetcher = level==='cluster' ? getClusterKpis(scopeName,fp) : level==='asm' ? getAsmKpis(scopeName,fp) : getTsoeKpis(scopeName,fp)
-    Promise.all([kpiFetcher, getActiveInvoiceList({ scope:level, name:scopeName, ...fp, invoiceState })])
+    Promise.all([kpiFetcher, getActiveInvoiceList({ scope:level, name:scopeName, ...fp, invoiceState, view:invoiceView })])
       .then(([k,list]) => { setKpis(k); setInvoices(list.invoices||[]) })
       .catch(e => setError(e.response?.data?.message || e.message))
       .finally(() => setLoading(false))
-  }, [level, selectedCluster, name, dateFrom, dateTo, distributorFilter, invoiceState])
+  }, [level, selectedCluster, name, dateFrom, dateTo, distributorFilter, invoiceState, invoiceView, refreshTick])
 
   const showAsmCol = level==='cluster', showHqCol = level==='cluster' || level==='asm'
 
@@ -422,22 +462,38 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
         </div>
       )}
 
-      {/* Active Invoice List */}
+      {/* Invoice List */}
       {!loading && !error && kpis && (
         <div className="bg-m-surface rounded-xl border border-m-border shadow-card overflow-hidden">
-          <div className="px-5 py-4 border-b border-m-border flex items-center gap-2">
+          <div className="px-5 py-4 border-b border-m-border flex flex-wrap items-center gap-3">
             <FileText size={14} style={{ color:MB }} />
-            <h2 className="font-bold text-sm text-m-text">Active Invoice List</h2>
+            <h2 className="font-bold text-sm text-m-text">{invoiceView==='all' ? 'All Invoices' : 'Active Invoice List'}</h2>
+            <div className="flex rounded-lg border border-m-border overflow-hidden">
+              {[{key:'active',label:'Active Invoices'},{key:'all',label:'All Invoices'}].map(({key,label}) => (
+                <button key={key} onClick={() => setInvoiceView(key)}
+                  className={`px-3 py-1 text-[11px] font-bold transition-colors ${invoiceView===key ? 'text-white' : 'text-m-muted hover:bg-m-bg'}`}
+                  style={invoiceView===key ? { background:MB } : {}}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button onClick={refreshLiveLocations} disabled={locationsRefreshing}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-m-muted hover:text-m-text bg-m-bg hover:bg-m-border/40 border border-m-border transition-colors disabled:opacity-60">
+              <RefreshCw size={11} className={locationsRefreshing ? 'animate-spin' : ''} />
+              {locationsRefreshing ? 'Refreshing locations…' : 'Refresh Locations'}
+            </button>
             <span className="ml-auto text-xs text-m-muted font-mono">{invoices.length}</span>
           </div>
           {invoices.length === 0 ? (
-            <p className="text-m-muted text-sm text-center py-8">No active invoices match the current filters.</p>
+            <p className="text-m-muted text-sm text-center py-8">
+              {invoiceView==='all' ? 'No invoices match the current filters.' : 'No active invoices match the current filters.'}
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-[11px] font-semibold text-m-muted uppercase tracking-widest border-b border-m-border bg-m-bg">
-                    {['Invoice No', showAsmCol&&'ASM Area', showHqCol&&'HQ', 'Distributor','Status','Vehicle','Last Updated','Age'].filter(Boolean).map(h => (
+                    {['Invoice No', showAsmCol&&'ASM Area', showHqCol&&'HQ', 'Distributor','Status','Location','Vehicle','Last Updated','Dispatch Date','Age'].filter(Boolean).map(h => (
                       <th key={h} className="px-4 py-2.5 font-semibold">{h}</th>
                     ))}
                   </tr>
@@ -449,12 +505,12 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
                       {showAsmCol && <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.asmArea||'—'}</td>}
                       {showHqCol  && <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.tsoeName||'—'}</td>}
                       <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.distributorName||inv.distributorCode}</td>
-                      <td className="px-4 py-2.5 whitespace-nowrap">
-                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${inv.isOverdue ? 'text-m-red bg-m-red-50 border-m-red/25' : 'text-m-amber bg-m-amber-50 border-m-amber/25'}`}>{inv.status}</span>
-                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap"><InvoiceStatusPill status={inv.status} /></td>
+                      <td className="px-4 py-2.5 text-m-text whitespace-nowrap text-xs flex items-center gap-1"><MapPin size={11} className="text-m-muted flex-shrink-0" />{inv.location||'—'}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap"><VehicleStatusPill status={inv.vehicleStatus} /></td>
                       <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{formatInvoiceDate(inv.lastUpdated)}</td>
-                      <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{inv.ageDays!=null?`${inv.ageDays}d`:'—'}</td>
+                      <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{formatInvoiceDate(inv.dispatchDate)}</td>
+                      <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{inv.ageDays!=null?`${inv.ageDays} Days`:'--'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -484,7 +540,16 @@ export default function HierarchyPage() {
 
   useEffect(() => { load() }, [load])
 
-  const handleSync = async () => { setSyncing(true); try { await syncHierarchy(); load() } catch { /* ignore */ } finally { setSyncing(false) } }
+  const handleSync = async () => {
+    setSyncing(true)
+    try {
+      // Hierarchy structure + live BLE/GPS device locations refresh together
+      // so "Refresh" always means "give me the latest of everything", not
+      // just the sheet-derived hierarchy tree.
+      await Promise.allSettled([syncHierarchy(), triggerRefreshSync()])
+      load()
+    } catch { /* ignore */ } finally { setSyncing(false) }
+  }
 
   const allClusters = (tree||[]).flatMap(z=>z.clusters)
   const allAsms     = allClusters.flatMap(c=>c.asms)
