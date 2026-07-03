@@ -356,14 +356,22 @@ router.get('/invoices/:invoiceNo', (req, res) => {
       });
     }
 
+    // Live GPS tracking only makes sense for an ONGOING delivery. Once an
+    // invoice has Reached, the BLE tag is very likely already en route to
+    // its next drop — showing "where the vehicle is now" against a
+    // completed invoice is actively misleading, not just unnecessary.
+    const trackingAvailable = result.status !== 'Reached';
+
     // Enrich with live vehicle GPS — same lookup the public /api/invoice/track uses.
     const vehicleDevMap = new Map(
       getAllVehicleDeviceMappings().map(v => [v.vehicleNo, v.deviceName])
     );
     const deviceMap = new Map(getAllDevices().map(d => [d.device_name, d]));
-    const tracking  = getInvoiceLiveTracking(result.vehicleNo, vehicleDevMap, deviceMap);
+    const tracking  = trackingAvailable
+      ? getInvoiceLiveTracking(result.vehicleNo, vehicleDevMap, deviceMap)
+      : null;
 
-    res.json({ ...result, tracking });
+    res.json({ ...result, tracking, trackingAvailable });
   } catch (err) {
     logger.error('GET /api/hierarchy/invoices/:invoiceNo error: ' + err.message);
     res.status(500).json({ error: err.message });

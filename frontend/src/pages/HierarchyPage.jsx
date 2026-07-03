@@ -33,6 +33,11 @@ function VehicleStatusPill({ status }) {
       <span className="w-1.5 h-1.5 rounded-full bg-current" />Assigned
     </span>
   )
+  if (status === 'Trip Completed') return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border" style={{ background:'rgba(11,111,203,.10)', color:TEAL, borderColor:'rgba(11,111,203,.25)' }}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current" />Trip Completed
+    </span>
+  )
   return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-m-bg border border-m-border text-m-muted">Not Assigned</span>
 }
 
@@ -187,7 +192,17 @@ function InvoiceTrackingModal({ invoiceNo, onClose }) {
                   )}
                 </div>
               )}
-              {!detail.tracking && <p className="text-xs text-m-muted text-center pt-1">No vehicle tracking device assigned.</p>}
+              {/* Trip completed — the BLE tag may already be riding along on its
+                  next delivery, so surfacing "where it is now" against this
+                  finished invoice would be actively misleading, not just stale. */}
+              {!detail.tracking && detail.trackingAvailable === false && (
+                <div className="rounded-xl border border-m-border bg-m-bg p-3 text-center">
+                  <p className="text-xs text-m-muted">Tracking unavailable – Trip completed.</p>
+                </div>
+              )}
+              {!detail.tracking && detail.trackingAvailable !== false && (
+                <p className="text-xs text-m-muted text-center pt-1">No vehicle tracking device assigned.</p>
+              )}
             </div>
           )}
         </div>

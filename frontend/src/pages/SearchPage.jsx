@@ -68,6 +68,11 @@ function VehicleStatusPill({ status }) {
       <span className="w-1.5 h-1.5 rounded-full bg-current" />Assigned
     </span>
   )
+  if (status === 'Trip Completed') return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border" style={{ background:'rgba(11,111,203,.10)', color:'#0B6FCB', borderColor:'rgba(11,111,203,.25)' }}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current" />Trip Completed
+    </span>
+  )
   return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-m-bg border border-m-border text-m-muted">Not Assigned</span>
 }
 
@@ -105,7 +110,14 @@ function InvoiceDetailModal({ invoiceNo, onClose }) {
               )}
             </div>
           )}
-          {!detail.tracking && <p className="text-xs text-m-muted text-center pt-1">No tracking device assigned to this vehicle.</p>}
+          {/* Trip completed — the vehicle may already be on its next delivery,
+              so its current location is no longer relevant to this invoice. */}
+          {!detail.tracking && detail.trackingAvailable === false && (
+            <p className="text-xs text-m-muted text-center pt-1">Tracking unavailable – Trip completed.</p>
+          )}
+          {!detail.tracking && detail.trackingAvailable !== false && (
+            <p className="text-xs text-m-muted text-center pt-1">No tracking device assigned to this vehicle.</p>
+          )}
         </div>
       )}
     </ModalShell>

@@ -444,6 +444,57 @@ async function _handleGoogleAccountPage(page) {
   }
 }
 
+// ─── triggerLocationRefresh ────────────────────────────────────────────────
+// Find Hub will happily keep showing a device's last reported fix
+// indefinitely — selecting a device does NOT by itself guarantee a fresh
+// ping. This looks for whatever refresh/locate control the device detail
+// panel exposes (Find Hub uses custom Material Web Components with no
+// stable selectors, so several loose text/label matches are tried — same
+// reasoning as handleTrackerSignIn above) and clicks it, then waits out
+// any "Locating…" indicator before the caller reads coordinates. If no
+// explicit control is found (some tag types auto-refresh purely from
+// being selected, or a fix is already mid-flight), this is a no-op rather
+// than a hard failure — we still poll for a fresh fix afterwards either way.
+async function triggerLocationRefresh(page, deviceName) {
+  try {
+    const clicked = await page.evaluate(() => {
+      const candidates = Array.from(document.querySelectorAll(
+        'button, [role="button"], md-icon-button, md-standard-icon-button, [tabindex="0"]'
+      ));
+      const label = el => (
+        (el.getAttribute('aria-label') || '') + ' ' +
+        (el.title || '') + ' ' +
+        (el.innerText || '')
+      ).toLowerCase();
+      const isRefreshControl = el => /refresh|reload|locate device|update location|find now|sync location|get current location/.test(label(el));
+      const btn = candidates.find(el => el.offsetParent !== null && isRefreshControl(el));
+      if (btn) { btn.click(); return label(btn).trim().slice(0, 40) || 'refresh control'; }
+      return null;
+    });
+
+    if (clicked) {
+      logger.info(`  [refresh] Clicked "${clicked}" for "${deviceName}" — waiting for a live fix...`);
+    } else {
+      logger.info(`  [refresh] No explicit refresh control for "${deviceName}" — relying on Find Hub's auto-locate on selection`);
+    }
+
+    // Whether or not an explicit control was found, give Find Hub a moment
+    // to resolve a fresh fix and wait out any "Locating…" text it shows,
+    // so extractActiveDeviceData() afterwards reads a live ping rather
+    // than whatever coordinates happened to already be on screen.
+    await page.waitForTimeout(2000);
+    for (let i = 0; i < 20; i++) {
+      const stillLocating = await page.evaluate(() =>
+        /locating|updating location|getting location|finding device/i.test(document.body?.innerText?.slice(0, 500) || '')
+      ).catch(() => false);
+      if (!stillLocating) break;
+      await page.waitForTimeout(500);
+    }
+  } catch (e) {
+    logger.info(`  [refresh] triggerLocationRefresh skipped for "${deviceName}": ${e.message}`);
+  }
+}
+
 // ─── clickDeviceByName ────────────────────────────────────────────────────────
 
 async function clickDeviceByName(page, deviceName) {
@@ -474,6 +525,10 @@ async function clickDeviceByName(page, deviceName) {
   // Step 3: handle tracker "Sign in" gate (Noise Tag, Moto Tag, etc.)
   await handleTrackerSignIn(page, deviceName);
   await handleTrackerPin(page, deviceName);
+
+  // Step 3b: request a fresh fix instead of trusting whatever's cached —
+  // do this before polling for coordinates below.
+  await triggerLocationRefresh(page, deviceName);
 
   // Step 4: poll up to 20s — trackers are slower than phones
   for (let i = 0; i < 40; i++) {
@@ -604,6 +659,7 @@ async function fetchAllDevices() {
     // Single device auto-selected
     if (initial.state === 'autoselected') {
       logger.info('Single device auto-selected — extracting directly');
+      await triggerLocationRefresh(page, '(auto-selected device)');
       const data = await extractActiveDeviceData(page);
       if (!data.lat) return [];
       return [{

@@ -244,6 +244,14 @@ function enrichInvoiceRow(m, todayMs) {
   const dispatchMs = m.dispatchDate ? toComparableDate(m.dispatchDate) : 0;
   const ageDays    = dispatchMs > 0 ? Math.floor((todayMs - dispatchMs) / 86400000) : null;
 
+  // Vehicle column: "Assigned" while the delivery is still in flight (At
+  // Hub / In Transit), "Trip Completed" the moment status flips to
+  // "Reached" — the BLE tag may well stay mapped to this vehicle for its
+  // NEXT trip, but that's irrelevant to this invoice, which is done.
+  const vehicleStatus = !m.vehicleNo
+    ? 'Not Assigned'
+    : (status === 'Reached' ? 'Trip Completed' : 'Assigned');
+
   return {
     invoiceNo:       m.invoiceNo,
     asmArea:         hier.asmArea  || '',   // ← stable Area (Change 1)
@@ -257,7 +265,7 @@ function enrichInvoiceRow(m, todayMs) {
     distanceToHub:         live ? live.distanceToHub : null,
     distanceToDistributor: live ? live.distanceToDistributor : null,
     vehicleNo:       m.vehicleNo || null,
-    vehicleStatus:   m.vehicleNo ? 'Assigned' : 'Not Assigned',
+    vehicleStatus,
     invoiceDate:     m.invoiceDate || null,
     appointmentDate: m.appointmentDate || null,
     lastUpdated:     m.invoiceDate || null,     // Sheet Column B — unchanged
