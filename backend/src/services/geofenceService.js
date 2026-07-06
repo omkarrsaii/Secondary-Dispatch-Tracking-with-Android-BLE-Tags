@@ -28,7 +28,7 @@ const logger    = require('../utils/logger');
 const md        = require('./masterDataService');
 const mapping   = require('./mappingService');
 const sheets    = require('./sheetsService');
-const { getDeviceByName } = require('../db/database');
+const { getDeviceByName, getAppState, setAppState } = require('../db/database');
 const { getDistanceInKm } = require('../utils/geoUtils');
 
 const GEOFENCE_RADIUS_METERS = parseInt(process.env.GEOFENCE_RADIUS_METERS) || 500;
@@ -157,6 +157,28 @@ async function runGeofenceCheck() {
     await sheets.updateInvoiceStatuses(rowNumbers, 'Reached');
     mapping.markInvoicesReached(reached.map(m => m.invoiceNo), 'Reached');
 
+    // Arrival Time — stamped in the SAME pass as the Status write, since
+    // "reached the geofence" and "arrived" are the same event. Only rows
+    // whose Arrival Time cell is still blank are included, so this is
+    // idempotent even if a scheduler tick and a manual refresh race —
+    // never overwrites an already-recorded arrival.
+    const arrivalCandidates = reached.filter(m => String(m.arrivalTime || '').trim() === '');
+    if (arrivalCandidates.length > 0) {
+      try {
+        const arrivalRows = arrivalCandidates.map(m => m.sheetRowNumber).filter(Boolean);
+        const arrivalResult = await sheets.updateInvoiceArrivalTimes(arrivalRows);
+        if (arrivalResult?.timestamp) {
+          mapping.markInvoicesArrivalTime(arrivalCandidates.map(m => m.invoiceNo), arrivalResult.timestamp);
+          logger.info(`geofenceService: stamped Arrival Time (${arrivalResult.timestamp}) for ${arrivalCandidates.length} invoice(s)`);
+        }
+      } catch (err) {
+        // Arrival Time is a nice-to-have alongside the core Status write —
+        // never let a failure here undo the Status write that already
+        // succeeded above.
+        logger.error('geofenceService: failed to write Arrival Time — ' + err.message);
+      }
+    }
+
     logger.info(`geofenceService: marked ${reached.length} invoice(s) as "Reached" — ${reached.map(m => m.invoiceNo).join(', ')}`);
     return { success: true, checked: pendingInvoices.length, reached: reached.length, invoiceNos: reached.map(m => m.invoiceNo) };
   } catch (err) {
@@ -165,8 +187,80 @@ async function runGeofenceCheck() {
   }
 }
 
+/**
+ * Departure Time write-back — detects the Inactive → Out for Delivery
+ * transition for every vehicle currently carrying at least one active
+ * invoice, and stamps an IST timestamp into that invoice's Departure Time
+ * column the FIRST time it happens.
+ *
+ * "Out for delivery" uses the exact same >HUB_RADIUS_METERS-from-hub rule
+ * the rest of the app already uses (kpiService's At Hub/In Transit labels,
+ * the Distributor Portal's own hub-distance badge) — so Departure Time
+ * always lines up with what every other part of the app calls "left the
+ * hub", instead of a fourth, independently-tuned definition.
+ *
+ * Previous per-vehicle state persists in app_state (survives restarts,
+ * needs no new table) specifically so a vehicle already out on its first
+ * fetch cycle ever observed under this feature is treated as a BASELINE,
+ * not a transition — this avoids a burst of false Departure Time writes
+ * for every truck that happened to already be mid-trip when this shipped.
+ * A vehicle only gets a fresh Departure Time stamped after it's been
+ * observed at-hub at least once and then leaves again — which matches
+ * real trip patterns (trucks return to the depot between rounds).
+ *
+ * One physical vehicle can carry several active invoices in the same
+ * round trip, so ALL of that vehicle's currently-active invoices get
+ * Departure Time stamped together — not just one arbitrarily chosen row.
+ */
+async function runDepartureTimeCheck() {
+  const all = mapping.getAllInvoiceMappings();
+  const activeInvoices = all.filter(m => String(m.status || '').trim() === '');
+
+  const byVehicle = new Map();
+  for (const m of activeInvoices) {
+    if (!m.vehicleNo) continue;
+    if (!byVehicle.has(m.vehicleNo)) byVehicle.set(m.vehicleNo, []);
+    byVehicle.get(m.vehicleNo).push(m);
+  }
+
+  const toStamp = [];
+
+  for (const [vehicleNo, invoices] of byVehicle) {
+    const distanceMeters = getDistanceToHubMeters(vehicleNo);
+    if (distanceMeters == null) continue; // no device mapped, or no fix yet — can't tell either way
+
+    const isOutForDelivery = distanceMeters > HUB_RADIUS_METERS;
+    const stateKey  = `vehicle_trip_state:${vehicleNo}`;
+    const prevState = getAppState(stateKey); // 'out' | 'inactive' | null (never observed before)
+
+    if (prevState === 'inactive' && isOutForDelivery) {
+      for (const m of invoices) {
+        if (String(m.departureTime || '').trim() === '') toStamp.push(m);
+      }
+    }
+
+    setAppState(stateKey, isOutForDelivery ? 'out' : 'inactive');
+  }
+
+  if (toStamp.length === 0) return { success: true, stamped: 0 };
+
+  try {
+    const rowNumbers = toStamp.map(m => m.sheetRowNumber).filter(Boolean);
+    const result = await sheets.updateInvoiceDepartureTimes(rowNumbers);
+    if (result?.timestamp) {
+      mapping.markInvoicesDepartureTime(toStamp.map(m => m.invoiceNo), result.timestamp);
+    }
+    logger.info(`geofenceService: stamped Departure Time (${result?.timestamp || '?'}) for ${toStamp.length} invoice(s) — ${toStamp.map(m => m.invoiceNo).join(', ')}`);
+    return { success: true, stamped: toStamp.length, invoiceNos: toStamp.map(m => m.invoiceNo) };
+  } catch (err) {
+    logger.error('geofenceService: failed to write Departure Time — ' + err.message);
+    return { success: false, error: err.message, wouldHaveStamped: toStamp.length };
+  }
+}
+
 module.exports = {
   runGeofenceCheck,
+  runDepartureTimeCheck,
   getDistanceMetersFor,
   getInvoiceDistanceMeters,
   getDistanceToHubMeters,

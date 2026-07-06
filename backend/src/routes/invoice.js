@@ -21,6 +21,7 @@ const fs      = require('fs');
 
 const logger = require('../utils/logger');
 const { getDeviceByName } = require('../db/database');
+const md = require('../services/masterDataService');
 const {
   resolveInvoice,
   syncFromGoogleSheets,
@@ -31,11 +32,17 @@ const {
   importVehicleDeviceMappingFromCSV,
 } = require('../services/mappingService');
 
+// Same HUB_LAT/HUB_LON convention already used by geofenceService.js,
+// dashboardRoutes.js, and routeRoutes.js — kept as its own local constant
+// here (rather than importing) since this route file otherwise has no
+// dependency on geofenceService other than the lazy require below.
+const HUB_LAT = parseFloat(process.env.HUB_LAT || '17.608504');
+const HUB_LON = parseFloat(process.env.HUB_LON || '78.528605');
+const HUB_RADIUS_METERS = parseInt(process.env.HUB_RADIUS_METERS) || 1000;
+
 // Lazy require — same dodge-load-order pattern already used in
-// distributorPortalService.js. Reuses the existing single source of truth
-// for vehicle→distributor distance (getInvoiceDistanceMeters) rather than
-// reimplementing the Haversine + device/location lookup a third time.
-function getGeofenceService() { return require('../services/geofenceService'); }
+// distributorPortalService.js.
+function getRoutingService()  { return require('../services/routingService'); }
 
 // ─── Core resolution logic ────────────────────────────────────────────────────
 
@@ -87,33 +94,77 @@ async function trackInvoice(invoiceNo, res) {
 
   // Step 3 — Build and return result
   const hasCoords = deviceRecord.latitude && deviceRecord.longitude;
+  const vehicleLat = hasCoords ? parseFloat(deviceRecord.latitude)  : null;
+  const vehicleLon = hasCoords ? parseFloat(deviceRecord.longitude) : null;
 
-  // Live distance-to-destination (distributor location), same calc used by
-  // the Distributor Portal's invoice list and the geofencing pass itself —
-  // not a stored/cached value, computed fresh on every request. Wrapped in
-  // try/catch so a missing/misconfigured Distributor Location Sheet never
-  // breaks the core tracking response — it just omits this field.
+  // Sheet-authoritative lifecycle fields. "Reached" comes straight from the
+  // invoice's own Status cell (written by geofenceService's automated
+  // pass) rather than being re-derived from a fresh live-distance check —
+  // this is what keeps it in lockstep with Departure/Arrival Time, which
+  // are ALSO tied to that same Status transition. A live-distance-based
+  // "reached" could disagree with the sheet (e.g. the vehicle having
+  // since moved away again), which would show an Arrival Time next to a
+  // badge that no longer says Reached.
+  const reachedDestination = String(resolution.meta?.status || '').trim() === 'Reached';
+  const departureTime = resolution.meta?.departureTime || null;
+  const arrivalTime   = resolution.meta?.arrivalTime   || null;
+
+  // Road distance + route geometry — Depot→Vehicle and Vehicle→Destination.
+  // Both numbers AND the polyline the map draws come from the exact same
+  // routing-engine response, so they can never silently disagree with each
+  // other. Wrapped defensively: if the routing engine (or the Distributor
+  // Location Sheet lookup) fails for any reason, the core tracking
+  // response still returns everything else — these fields just come back
+  // null and the frontend hides the map/those rows accordingly.
+  let distanceFromHubMeters = null;
   let distanceToDestinationMeters = null;
-  let reachedDestination = false;
+  let depotToVehicleRoute = null;
+  let vehicleToDestinationRoute = null;
+  let destination = null; // { latitude, longitude } — dropped-pin marker
+
   try {
-    const { getInvoiceDistanceMeters, GEOFENCE_RADIUS_METERS } = getGeofenceService();
-    const meters = getInvoiceDistanceMeters(sanitized);
-    if (meters != null) {
-      distanceToDestinationMeters = Math.round(meters);
-      reachedDestination = meters <= GEOFENCE_RADIUS_METERS;
+    const routing = getRoutingService();
+
+    if (hasCoords) {
+      depotToVehicleRoute  = await routing.getRoadRoute(HUB_LAT, HUB_LON, vehicleLat, vehicleLon);
+      distanceFromHubMeters = depotToVehicleRoute?.distanceMeters ?? null;
+    }
+
+    const distributorCode = resolution.meta?.distributorCode;
+    if (distributorCode) {
+      const distLoc = md.getDistributorLocation(distributorCode);
+      if (distLoc) {
+        destination = { latitude: distLoc.latitude, longitude: distLoc.longitude };
+        if (hasCoords) {
+          vehicleToDestinationRoute = await routing.getRoadRoute(
+            vehicleLat, vehicleLon, distLoc.latitude, distLoc.longitude
+          );
+          distanceToDestinationMeters = vehicleToDestinationRoute?.distanceMeters ?? null;
+        }
+      }
     }
   } catch (err) {
-    logger.warn('trackInvoice: distance-to-destination lookup failed — ' + err.message);
+    logger.warn('trackInvoice: road-distance/route lookup failed — ' + err.message);
   }
+
+  // Single authoritative "At Hub" / "In Transit" / "Reached" label — same
+  // precedence and threshold (HUB_RADIUS_METERS) as kpiService's
+  // deriveLiveStatus on the admin dashboard, computed here once so the
+  // Distributor Portal never has to re-derive it (and can't disagree with
+  // the admin side by using a different threshold).
+  let vehicleStatus = 'In Transit';
+  if (reachedDestination) vehicleStatus = 'Reached';
+  else if (distanceFromHubMeters != null && distanceFromHubMeters <= HUB_RADIUS_METERS) vehicleStatus = 'At Hub';
 
   const result = {
     invoiceNo:  sanitized,
     vehicleNo:  resolution.vehicleNo,
     deviceName: resolution.deviceName,
     meta:       resolution.meta,
+    vehicleStatus,
     location: {
-      latitude:  hasCoords ? parseFloat(deviceRecord.latitude)  : null,
-      longitude: hasCoords ? parseFloat(deviceRecord.longitude) : null,
+      latitude:  vehicleLat,
+      longitude: vehicleLon,
       city:      deviceRecord.city            || null,
       state:     deviceRecord.state           || null,
       country:   deviceRecord.country         || null,
@@ -129,7 +180,20 @@ async function trackInvoice(invoiceNo, res) {
       ? `https://www.google.com/maps?q=${deviceRecord.latitude},${deviceRecord.longitude}`
       : null,
     distanceToDestinationMeters,
+    distanceFromHubMeters,
     reachedDestination,
+    departureTime,
+    arrivalTime,
+    // ── Live Map inputs — depot, destination, and the two road-route
+    // segments (traveled = depot→vehicle, remaining = vehicle→destination),
+    // so the map can render both legs distinctly instead of just a marker. ──
+    hub: { latitude: HUB_LAT, longitude: HUB_LON },
+    destination,
+    route: {
+      traveled:  depotToVehicleRoute?.geometry        || null,
+      remaining: vehicleToDestinationRoute?.geometry  || null,
+      source:    depotToVehicleRoute?.source || vehicleToDestinationRoute?.source || null,
+    },
     trackedAt: new Date().toISOString(),
   };
 

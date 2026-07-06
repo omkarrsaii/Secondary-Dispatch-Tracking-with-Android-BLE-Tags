@@ -245,6 +245,14 @@ function resolveInvoice(invoiceNo) {
       customerCode: vehicleEntry.customerCode || null,
       chainName:    vehicleEntry.chainName    || null,
       destination:  vehicleEntry.location     || null,
+      // ── Added for road-distance-to-destination + Departure/Arrival Time
+      // in the Distributor Portal tracking response — same invoice row,
+      // just surfacing fields that were already being parsed but not
+      // passed through here. ──
+      distributorCode: vehicleEntry.distributorCode || vehicleEntry.customerCode || null,
+      status:          vehicleEntry.status          || '',
+      departureTime:   vehicleEntry.departureTime    || null,
+      arrivalTime:     vehicleEntry.arrivalTime       || null,
     },
   };
 }
@@ -276,6 +284,33 @@ function markInvoicesReached(invoiceNos, value = 'Reached') {
   for (const no of (invoiceNos || [])) {
     const entry = invoiceMap.get(String(no).trim());
     if (entry) { entry.status = value; updated++; }
+  }
+  return updated;
+}
+
+/**
+ * Same in-memory-mirror pattern as markInvoicesReached, for the Departure
+ * Time write-back — keeps the in-memory map in sync with the sheet the
+ * instant geofenceService's write succeeds, instead of waiting for the
+ * next scheduled full re-sync.
+ */
+function markInvoicesDepartureTime(invoiceNos, value) {
+  bootstrapMaps();
+  let updated = 0;
+  for (const no of (invoiceNos || [])) {
+    const entry = invoiceMap.get(String(no).trim());
+    if (entry) { entry.departureTime = value; updated++; }
+  }
+  return updated;
+}
+
+/** Same pattern, for Arrival Time. */
+function markInvoicesArrivalTime(invoiceNos, value) {
+  bootstrapMaps();
+  let updated = 0;
+  for (const no of (invoiceNos || [])) {
+    const entry = invoiceMap.get(String(no).trim());
+    if (entry) { entry.arrivalTime = value; updated++; }
   }
   return updated;
 }
@@ -351,6 +386,8 @@ module.exports = {
   getAllInvoiceMappings,
   getAllVehicleDeviceMappings,
   markInvoicesReached,
+  markInvoicesDepartureTime,
+  markInvoicesArrivalTime,
   importInvoiceMappingFromCSV,
   importVehicleDeviceMappingFromCSV,
 };

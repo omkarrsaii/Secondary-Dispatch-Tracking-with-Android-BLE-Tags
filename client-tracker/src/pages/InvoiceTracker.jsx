@@ -70,7 +70,29 @@ export default function InvoiceTracker({ initialInvoice, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Auto-refresh: re-fetch the tracking data periodically so the location
+  // and map update on their own whenever the vehicle's position changes,
+  // without the person needing to tap "Refresh now" — matches the backend
+  // fetch/geofence cycle rather than the frontend re-deriving anything.
+  // Silent (doesn't flip back to the loading spinner) so the card doesn't
+  // flicker every cycle. Stops once the delivery has Reached — there's
+  // nothing left to refresh at that point.
+  useEffect(() => {
+    if (state !== 'result' || !lastInv || result?.data?.reachedDestination) return
+    const intervalId = setInterval(async () => {
+      try {
+        const data = await trackInvoice(lastInv)
+        setResult(data)
+      } catch {
+        // A silent refresh failing shouldn't disrupt what's already on
+        // screen — the next tick (or a manual "Refresh now") will retry.
+      }
+    }, 45000)
+    return () => clearInterval(intervalId)
+  }, [state, lastInv, result?.data?.reachedDestination])
+
   const loc = result?.data?.location
+  const data = result?.data
 
   return (
     <div className="min-h-dvh dot-grid flex flex-col">
@@ -128,23 +150,34 @@ export default function InvoiceTracker({ initialInvoice, onBack }) {
         {state === 'result' && result && (
           <div className="mt-6 space-y-4">
             <ResultCard result={result} />
-            {loc?.latitude && loc?.longitude && (
+            {/* Live Map only for an ongoing trip — once Reached, the vehicle
+                may already be en route to its next delivery, so showing
+                "where it is now" here would be misleading rather than just
+                unnecessary. ResultCard already shows the completed-trip
+                notice in this case. */}
+            {!data?.reachedDestination && loc?.latitude && loc?.longitude && (
               <MapView
-                latitude={loc.latitude}
-                longitude={loc.longitude}
-                label={result.data.vehicleNo}
-                address={loc.address}
+                vehicle={{ latitude: loc.latitude, longitude: loc.longitude, label: data.vehicleNo, address: loc.address }}
+                hub={data.hub}
+                destination={data.destination}
+                route={data.route}
+                vehicleStatus={data.vehicleStatus}
+                distanceFromHubMeters={data.distanceFromHubMeters}
+                distanceToDestinationMeters={data.distanceToDestinationMeters}
               />
             )}
             <p className="text-center text-xs text-slate/50 pt-2">
-              Data refreshes automatically every few minutes.{' '}
-              <button
-                onClick={() => handleSearch(lastInv)}
-                className="font-medium underline underline-offset-2 transition-colors"
-                style={{ color: MB }}
-              >
-                Refresh now
-              </button>
+              {data?.reachedDestination
+                ? 'This delivery has been completed.'
+                : (<>Location updates automatically as the vehicle moves.{' '}
+                    <button
+                      onClick={() => handleSearch(lastInv)}
+                      className="font-medium underline underline-offset-2 transition-colors"
+                      style={{ color: MB }}
+                    >
+                      Refresh now
+                    </button>
+                  </>)}
             </p>
           </div>
         )}

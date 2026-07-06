@@ -1,7 +1,7 @@
 const { fetchAllDevices } = require('./browserService');
 const { reverseGeocode } = require('./geocodeService');
 const { upsertDevice, insertHistory, setAppState } = require('../db/database');
-const { runGeofenceCheck } = require('./geofenceService');
+const { runGeofenceCheck, runDepartureTimeCheck } = require('./geofenceService');
 const logger = require('../utils/logger');
 
 let isFetching = false;
@@ -63,6 +63,15 @@ async function runFetch() {
       await runGeofenceCheck();
     } catch (err) {
       logger.error('Geofence check failed after fetch: ' + err.message);
+    }
+
+    // Departure Time (Inactive → Out for Delivery) detection — same "runs
+    // on every refresh" reasoning, and same defensive wrapping so a
+    // failure here can never break the fetch cycle itself.
+    try {
+      await runDepartureTimeCheck();
+    } catch (err) {
+      logger.error('Departure Time check failed after fetch: ' + err.message);
     }
 
     return { success: true, count: results.length, duration, devices: results };

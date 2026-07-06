@@ -250,6 +250,11 @@ async function fetchInvoiceMappings() {
     appointmentDate: findColIndex(headers, 'appointment date', 'appointment'),
     // ── Added for Dispatch Date / Age column (Sheet Column S) — purely additive ──
     dispatchDate:    findColIndex(headers, 'dispatch date'),
+    // ── Added for Departure/Arrival Time write-back — purely additive.
+    // "departure" also matches "departure time" so the more specific
+    // partial is tried first to avoid any future ambiguity. ──
+    departureTime:   findColIndex(headers, 'departure time', 'departure'),
+    arrivalTime:     findColIndex(headers, 'arrival time', 'arrival'),
   };
 
   // Remember exactly where Status (and Timestamp) live for write-back (geofencing).
@@ -260,12 +265,23 @@ async function fetchInvoiceMappings() {
     statusColLetter: idx.status >= 0 ? colIndexToLetter(idx.status) : null,
     timestampColIndex: idx.timestamp,
     timestampColLetter: idx.timestamp >= 0 ? colIndexToLetter(idx.timestamp) : null,
+    // ── Added for Departure/Arrival Time write-back ──
+    departureColIndex:  idx.departureTime,
+    departureColLetter: idx.departureTime >= 0 ? colIndexToLetter(idx.departureTime) : null,
+    arrivalColIndex:     idx.arrivalTime,
+    arrivalColLetter:    idx.arrivalTime >= 0 ? colIndexToLetter(idx.arrivalTime) : null,
   };
   if (idx.status < 0) {
     logger.warn('sheetsService: no Status column found — geofencing write-back will be disabled');
   }
   if (idx.timestamp < 0) {
     logger.warn('sheetsService: no Timestamp column found — geofencing write-back will only fill Status, not Timestamp');
+  }
+  if (idx.departureTime < 0) {
+    logger.warn('sheetsService: no Departure Time column found — Inactive→Out for Delivery write-back will be disabled');
+  }
+  if (idx.arrivalTime < 0) {
+    logger.warn('sheetsService: no Arrival Time column found — Arrival Time write-back will be disabled');
   }
 
   const mappings = [];
@@ -291,6 +307,10 @@ async function fetchInvoiceMappings() {
       appointmentDate: idx.appointmentDate >= 0 ? String(row[idx.appointmentDate] || '').trim() : '',
       // ── Added for Dispatch Date / Age column — actual vehicle dispatch date (Column S) ──
       dispatchDate:    idx.dispatchDate    >= 0 ? String(row[idx.dispatchDate]    || '').trim() : '',
+      // ── Added for Departure/Arrival Time — read fresh on every sync so a
+      // manual sheet edit is picked up, same as every other field here ──
+      departureTime:   idx.departureTime   >= 0 ? String(row[idx.departureTime]   || '').trim() : '',
+      arrivalTime:      idx.arrivalTime     >= 0 ? String(row[idx.arrivalTime]     || '').trim() : '',
       // ── Added for geofencing write-back — the exact sheet row (1-indexed) this came from ──
       sheetRowNumber:  i + 1,
     });
@@ -389,6 +409,78 @@ async function updateInvoiceStatuses(rowNumbers, value = 'Reached') {
   );
   return { success: true, updated: rowNumbers.length, timestamp: meta.timestampColIndex >= 0 ? timestampValue : null };
 }
+
+/**
+ * Stamps the current IST clock time into the Departure Time column for the
+ * given rows — used exactly once per invoice, at the moment its vehicle's
+ * status flips Inactive → Out for Delivery (detected in geofenceService).
+ * Callers are responsible for only ever passing rows whose Departure Time
+ * cell is still blank — this function itself just writes what it's told,
+ * same "trust the caller's filtering" design as updateInvoiceStatuses.
+ */
+async function updateInvoiceDepartureTimes(rowNumbers) {
+  if (!rowNumbers || rowNumbers.length === 0) return { success: true, updated: 0 };
+
+  const meta = getInvoiceSheetWriteMeta();
+  if (!meta || meta.departureColIndex < 0) {
+    logger.warn('sheetsService: no Departure Time column found — skipping departure-time write-back');
+    return { success: false, reason: 'no_departure_column' };
+  }
+
+  const authClient = await getAuthClient();
+  const sheetsApi   = google.sheets({ version: 'v4', auth: authClient });
+  const quotedTab  = quoteSheetNameForRange(meta.tab);
+  const timestampValue = formatTimestampIST();
+
+  const data = rowNumbers.map(rowNumber => ({
+    range:  `${quotedTab}!${meta.departureColLetter}${rowNumber}`,
+    values: [[timestampValue]],
+  }));
+
+  await sheetsApi.spreadsheets.values.batchUpdate({
+    spreadsheetId: meta.spreadsheetId,
+    requestBody: { valueInputOption: 'RAW', data },
+  });
+
+  logger.info(`sheetsService: wrote Departure Time ("${timestampValue}") for ${rowNumbers.length} row(s) in "${meta.tab}"`);
+  return { success: true, updated: rowNumbers.length, timestamp: timestampValue };
+}
+
+/**
+ * Stamps the current IST clock time into the Arrival Time column for the
+ * given rows — used exactly once per invoice, in the SAME pass as the
+ * Status→"Reached" write in updateInvoiceStatuses (geofenceService calls
+ * both together), since "reached" and "arrived" are the same event.
+ * Same "caller filters to blank cells only" contract as the function above.
+ */
+async function updateInvoiceArrivalTimes(rowNumbers) {
+  if (!rowNumbers || rowNumbers.length === 0) return { success: true, updated: 0 };
+
+  const meta = getInvoiceSheetWriteMeta();
+  if (!meta || meta.arrivalColIndex < 0) {
+    logger.warn('sheetsService: no Arrival Time column found — skipping arrival-time write-back');
+    return { success: false, reason: 'no_arrival_column' };
+  }
+
+  const authClient = await getAuthClient();
+  const sheetsApi   = google.sheets({ version: 'v4', auth: authClient });
+  const quotedTab  = quoteSheetNameForRange(meta.tab);
+  const timestampValue = formatTimestampIST();
+
+  const data = rowNumbers.map(rowNumber => ({
+    range:  `${quotedTab}!${meta.arrivalColLetter}${rowNumber}`,
+    values: [[timestampValue]],
+  }));
+
+  await sheetsApi.spreadsheets.values.batchUpdate({
+    spreadsheetId: meta.spreadsheetId,
+    requestBody: { valueInputOption: 'RAW', data },
+  });
+
+  logger.info(`sheetsService: wrote Arrival Time ("${timestampValue}") for ${rowNumbers.length} row(s) in "${meta.tab}"`);
+  return { success: true, updated: rowNumbers.length, timestamp: timestampValue };
+}
+
 async function fetchVehicleMappings() {
   const sheetId = trimEnv('VEHICLE_SHEET_ID');
   const tabName = trimEnv('VEHICLE_SHEET_TAB', 'Sheet1');
@@ -634,5 +726,7 @@ module.exports = {
   fetchHierarchyData,
   fetchDistributorLocations,
   updateInvoiceStatuses,
+  updateInvoiceDepartureTimes,
+  updateInvoiceArrivalTimes,
   getInvoiceSheetWriteMeta,
 };
