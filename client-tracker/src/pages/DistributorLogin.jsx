@@ -36,7 +36,7 @@ export default function DistributorLogin({ onLoginSuccess }) {
           </div>
           <div>
             <p className="font-extrabold text-sm leading-tight" style={{ color: MB }}>Marico</p>
-            <p className="text-[10px] text-slate tracking-widest uppercase leading-none mt-0.5 font-mono">Distributor Portal</p>
+            <p className="text-[10px] text-slate tracking-widest uppercase leading-none mt-0.5 font-mono">Distributor Vehicle Tracking Portal</p>
           </div>
         </div>
       </header>

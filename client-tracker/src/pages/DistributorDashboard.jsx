@@ -160,7 +160,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
           </div>
           <div className="min-w-0">
             <p className="font-extrabold text-sm leading-tight" style={{ color: MB }}>Marico</p>
-            <p className="text-[10px] text-slate tracking-widest uppercase leading-none mt-0.5 font-mono">Distributor Portal</p>
+            <p className="text-[10px] text-slate tracking-widest uppercase leading-none mt-0.5 font-mono">Distributor Vehicle Tracking Portal</p>
           </div>
           <button
             onClick={onSignOut}
@@ -178,7 +178,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
         <div className="mb-5 animate-fade-up">
           <p className="text-[11px] text-slate uppercase tracking-widest font-semibold mb-1">Welcome back</p>
           <h1 className="font-extrabold text-2xl leading-tight" style={{ color: MB }}>
-            {distributorName}
+            {distributorCode} # {distributorName}
           </h1>
         </div>
 
