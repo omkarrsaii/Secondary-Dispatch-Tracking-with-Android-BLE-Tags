@@ -36,11 +36,6 @@ function formatDistance(meters) {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`
 }
 
-const HUB_ICON = (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
-  </svg>
-)
 const PIN_ICON = (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
     <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
@@ -83,6 +78,42 @@ function VehicleStatusBadge({ status }) {
     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border bg-ok/15 text-ok border-ok/30">
       🟢 In Transit
     </span>
+  )
+}
+
+// Horizontal 3-card distance summary — Total (Hub → Destination) / Covered
+// / Remaining, all three from the routing engine's road distances (never
+// straight-line). Total is always derived as Covered + Remaining rather
+// than fetched separately, so the three numbers can never disagree with
+// each other.
+function DistanceSummaryRow({ coveredMeters, remainingMeters }) {
+  if (coveredMeters == null && remainingMeters == null) return null
+  const totalMeters = (coveredMeters ?? 0) + (remainingMeters ?? 0)
+
+  const cards = [
+    { label: 'Total Distance',     sub: 'Hub → Destination', value: totalMeters,     accent: false },
+    { label: 'Covered Distance',   sub: 'Hub → Vehicle',      value: coveredMeters,   accent: false },
+    { label: 'Remaining Distance', sub: 'Vehicle → Destination', value: remainingMeters, accent: true },
+  ]
+
+  return (
+    <div className="py-3 border-b border-rim/60">
+      <p className="text-xs text-mist mb-2 uppercase tracking-widest">Road Distance</p>
+      <div className="grid grid-cols-3 gap-2">
+        {cards.map(c => (
+          <div
+            key={c.label}
+            className={`rounded-xl border px-2.5 py-2.5 text-center ${c.accent ? 'bg-ember/10 border-ember/25' : 'bg-void/40 border-rim'}`}
+          >
+            <p className={`font-mono font-semibold leading-tight ${c.accent ? 'text-ember' : 'text-snow'} text-[15px]`}>
+              {formatDistance(c.value) || '—'}
+            </p>
+            <p className="text-[10px] text-mist mt-1 leading-tight">{c.label}</p>
+            <p className="text-[9px] text-mist/60 leading-tight">{c.sub}</p>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -147,12 +178,13 @@ export default function ResultCard({ result }) {
           </div>
         </div>
 
-        {/* Details — in the required order:
-            Destination → Current Location → Coordinates → Distance From Hub
-            → Departure Time → Vehicle Status → Distance To Destination
-            → Arrival Time → Last Seen → Data Updated At.
+        {/* Details — in order:
+            Chain/Customer → Destination → Current Location → Coordinates →
+            Road Distance summary (Total / Covered / Remaining, one
+            horizontal row) → Departure Time → Vehicle Status → Arrival
+            Time → Last Seen → Data Updated At → Battery/Network.
             Everything describing the vehicle's CURRENT position (current
-            location, coordinates, both distances, last seen, updated-at,
+            location, coordinates, distances, last seen, updated-at,
             battery/network, map) only makes sense for an ONGOING trip —
             once Reached, those are replaced by a single completed-trip
             notice, while Destination/Vehicle Status/Departure/Arrival Time
@@ -166,14 +198,14 @@ export default function ResultCard({ result }) {
             />
           )}
 
-          {/* 1. Destination */}
+          {/* Destination */}
           {meta.destination && (
             <InfoRow icon={PIN_ICON} label="Destination" value={meta.destination} />
           )}
 
           {!reached && (
             <>
-              {/* 2. Current Location */}
+              {/* Current Location */}
               <InfoRow
                 icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/></svg>}
                 label="Current Location"
@@ -181,7 +213,7 @@ export default function ResultCard({ result }) {
                 highlight
               />
 
-              {/* 3. Coordinates */}
+              {/* Coordinates */}
               {coordinates && (
                 <InfoRow
                   icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path strokeLinecap="round" strokeLinejoin="round" d="M2 12h20M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg>}
@@ -191,49 +223,38 @@ export default function ResultCard({ result }) {
                 />
               )}
 
-              {/* 4. Distance From Hub (road distance) */}
-              <InfoRow
-                icon={HUB_ICON}
-                label="Distance From Hub"
-                value={formatDistance(data.distanceFromHubMeters)}
-                mono
+              {/* Road distance summary — Total / Covered / Remaining, one
+                  horizontal row instead of two separate vertical fields. */}
+              <DistanceSummaryRow
+                coveredMeters={data.distanceFromHubMeters}
+                remainingMeters={data.distanceToDestinationMeters}
               />
             </>
           )}
 
-          {/* 5. Departure Time (IST) — a historical fact, shown regardless of
+          {/* Departure Time (IST) — a historical fact, shown regardless of
               whether the trip has since completed. */}
           {data.departureTime && (
             <InfoRow icon={CLOCK_ICON} label="Departure Time (IST)" value={data.departureTime} mono />
           )}
 
-          {/* 6. Vehicle Status — always shown */}
+          {/* Vehicle Status — always shown */}
           <div className="py-3 border-b border-rim/60">
             <p className="text-xs text-mist mb-1.5 uppercase tracking-widest">Vehicle Status</p>
             <VehicleStatusBadge status={data.vehicleStatus} />
           </div>
 
-          {/* 7. Distance To Destination (Road Distance) */}
-          {!reached && data.distanceToDestinationMeters != null && (
-            <InfoRow
-              icon={PIN_ICON}
-              label="Distance To Destination (Road Distance)"
-              value={formatDistance(data.distanceToDestinationMeters)}
-              mono
-            />
-          )}
-
-          {/* 8. Arrival Time (IST) */}
+          {/* Arrival Time (IST) */}
           {data.arrivalTime && (
             <InfoRow icon={CLOCK_ICON} label="Arrival Time (IST)" value={data.arrivalTime} mono />
           )}
 
           {!reached ? (
             <>
-              {/* 9. Last Seen */}
+              {/* Last Seen */}
               <InfoRow icon={CLOCK_ICON} label="Last Seen" value={loc.lastSeen} />
 
-              {/* 10. Data Updated At */}
+              {/* Data Updated At */}
               <InfoRow
                 icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>}
                 label="Data Updated At"

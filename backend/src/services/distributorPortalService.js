@@ -21,7 +21,8 @@
  *   but it isn't needed at this scale.
  */
 
-const { getAllInvoiceMappings } = require('./mappingService');
+const { getAllInvoiceMappings, getDeviceByVehicle } = require('./mappingService');
+const { getDeviceByName } = require('../db/database');
 const logger = require('../utils/logger');
 
 // Lazy require to dodge any load-order edge case — geofenceService doesn't
@@ -29,6 +30,10 @@ const logger = require('../utils/logger');
 // calc rather than re-implementing the same Haversine + device/location
 // lookup a third time.
 function getGeofenceService() { return require('./geofenceService'); }
+// Same lazy-require reasoning, for road distance (routingService) and the
+// distributor's lat/lng (masterDataService).
+function getRoutingService()    { return require('./routingService'); }
+function getMasterDataService() { return require('./masterDataService'); }
 
 // "Active" = the Status cell AND the "Any Other Remarks" cell are BOTH
 // blank/unfilled. If either one has anything written in it, the invoice
@@ -95,8 +100,91 @@ function getDistributorNameFromSheet(distributorCode) {
   return best || code;
 }
 
-/** All of a distributor's invoices where Status is blank/unfilled, newest first when dates are parseable. */
-function getActiveInvoicesForDistributor(distributorCode) {
+/**
+ * Per-invoice enrichment for the Distributor Portal's Active Invoices list
+ * (and the matching admin/ASM view in hierarchyRoutes.js — same function,
+ * same rule, so both sides always agree):
+ *
+ *   - vehicleStatus: "At Depot" / "In Transit" / "Reached" / "Not Assigned"
+ *     — "Reached" takes priority (checked first) since a vehicle can only
+ *     be doing one of these at a time and arrival is the more specific,
+ *     more useful signal; "At Depot" uses the same HUB_RADIUS_METERS
+ *     threshold as the rest of the app (kpiService's admin dashboard,
+ *     the tracking detail page).
+ *   - location: the vehicle's current locality/area (e.g. "Dundigal"),
+ *     read fresh from the devices table — never a cached/stale value.
+ *   - distanceMeters: REMAINING road distance, vehicle → destination,
+ *     from the routing engine (routingService) — never straight-line.
+ *   - reached: same threshold used for vehicleStatus === 'Reached'.
+ */
+async function enrichInvoiceForList(m) {
+  const base = {
+    invoiceNo:     m.invoiceNo,
+    invoiceDate:   m.invoiceDate || null,
+    vehicleNo:     m.vehicleNo || null,
+    vehicleStatus: 'Not Assigned',
+    location:      null,
+    distanceMeters: null,
+    reached:       false,
+  };
+  if (!m.vehicleNo) return base;
+
+  const geofence = getGeofenceService();
+  const deviceName = getDeviceByVehicle(m.vehicleNo);
+  const device = deviceName ? getDeviceByName(deviceName) : null;
+
+  if (device) {
+    base.location = device.locality || device.city || null;
+  }
+
+  // Remaining road distance (vehicle → destination) — same routing engine
+  // call used by the tracking detail page, so this list's number always
+  // matches what the distributor sees if they open the invoice.
+  if (device?.latitude && device?.longitude) {
+    try {
+      const md = getMasterDataService();
+      const distLoc = md.getDistributorLocation(m.distributorCode);
+      if (distLoc) {
+        const routing = getRoutingService();
+        const route = await routing.getRoadRoute(
+          parseFloat(device.latitude), parseFloat(device.longitude),
+          distLoc.latitude, distLoc.longitude
+        );
+        base.distanceMeters = route?.distanceMeters ?? null;
+      }
+    } catch (err) {
+      logger.warn(`distributorPortalService: road-distance lookup failed for ${m.invoiceNo} — ${err.message}`);
+    }
+  }
+
+  base.reached = base.distanceMeters != null && base.distanceMeters <= geofence.GEOFENCE_RADIUS_METERS;
+
+  if (base.reached) {
+    base.vehicleStatus = 'Reached';
+  } else if (device?.latitude && device?.longitude) {
+    const hubDistance = geofence.getDistanceToHubMeters(m.vehicleNo);
+    base.vehicleStatus = (hubDistance != null && hubDistance <= geofence.HUB_RADIUS_METERS) ? 'At Depot' : 'In Transit';
+  } else {
+    // Vehicle assigned but no live fix yet — treat as In Transit rather
+    // than silently showing nothing, matching kpiService's fallback.
+    base.vehicleStatus = 'In Transit';
+  }
+
+  return base;
+}
+
+/**
+ * All of a distributor's active (blank-Status) invoices, newest first,
+ * enriched with live status/location/road-distance.
+ *
+ * NOTE: this enriches the WHOLE active set, not just one page — same
+ * shape as before this function used road distance instead of
+ * straight-line. Fine at the scale a single distributor's active
+ * invoices actually reach (a handful to a few dozen); if that ever grows
+ * dramatically, enriching only the current page (after slicing in
+ * getPaginatedInvoices) would be the next optimization.
+ */
+async function getActiveInvoicesForDistributor(distributorCode) {
   const code = String(distributorCode || '').trim();
   if (!code) return [];
 
@@ -116,22 +204,7 @@ function getActiveInvoicesForDistributor(distributorCode) {
 
   active.sort((a, b) => toComparableDate(b.invoiceDate) - toComparableDate(a.invoiceDate));
 
-  const { getDistanceMetersFor, GEOFENCE_RADIUS_METERS } = getGeofenceService();
-
-  return active.map(m => {
-    const distanceMeters = getDistanceMetersFor(m.vehicleNo, m.distributorCode);
-    const reached = distanceMeters != null && distanceMeters <= GEOFENCE_RADIUS_METERS;
-    return {
-      invoiceNo:     m.invoiceNo,
-      invoiceDate:   m.invoiceDate || null,
-      vehicleNo:     m.vehicleNo || null,
-      vehicleStatus: m.vehicleNo ? 'Assigned' : 'Not Assigned',
-      // Live distance-to-destination — computed fresh every call, not
-      // dependent on geofenceService's own write-back having landed yet.
-      distanceMeters: distanceMeters != null ? Math.round(distanceMeters) : null,
-      reached,
-    };
-  });
+  return Promise.all(active.map(enrichInvoiceForList));
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────────
@@ -154,9 +227,9 @@ function isValidDistributorCode(distributorCode) {
  * Invoice Sheet (same source used for login validation and the invoice
  * list itself) is the reliable source of truth for this field.
  */
-function getDistributorSummary(distributorCode) {
+async function getDistributorSummary(distributorCode) {
   const code   = String(distributorCode || '').trim();
-  const active = getActiveInvoicesForDistributor(code);
+  const active = await getActiveInvoicesForDistributor(code);
 
   return {
     distributorCode:     code, // kept in the API response for internal use; the frontend must not render it
@@ -166,9 +239,9 @@ function getDistributorSummary(distributorCode) {
 }
 
 /** Paginated slice of a distributor's active invoices — frontend never receives the full set. */
-function getPaginatedInvoices(distributorCode, page = 1, limit = 20) {
+async function getPaginatedInvoices(distributorCode, page = 1, limit = 20) {
   const code  = String(distributorCode || '').trim();
-  const all   = getActiveInvoicesForDistributor(code);
+  const all   = await getActiveInvoicesForDistributor(code);
 
   const safePage  = Math.max(1, parseInt(page)  || 1);
   const safeLimit = Math.min(100, Math.max(1, parseInt(limit) || 20)); // cap to prevent abuse

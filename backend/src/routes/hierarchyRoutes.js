@@ -204,7 +204,7 @@ router.get('/distributors', (req, res) => {
 
 // ─── GET /api/hierarchy/distributor/:code ─────────────────────────────────────
 
-router.get('/distributor/:code', (req, res) => {
+router.get('/distributor/:code', async (req, res) => {
   try {
     const code   = req.params.code;
     const hier   = md.getDistributorHierarchy(code);
@@ -230,7 +230,7 @@ router.get('/distributor/:code', (req, res) => {
     // Same active-invoice list shown in the Distributor Portal — same
     // service function, same rule (Status AND Remarks both blank), so an
     // ASM sees exactly what the distributor themselves would see.
-    const activeInvoices = getActiveInvoicesForDistributor(code);
+    const activeInvoices = await getActiveInvoicesForDistributor(code);
 
     res.json({
       ...hier,

@@ -92,12 +92,8 @@ const destinationIcon = L.divIcon({
  *   hub:         { latitude, longitude } | null
  *   destination: { latitude, longitude } | null
  *   route:       { traveled: [[lat,lng],...]|null, remaining: [[lat,lng],...]|null }
- *   vehicleStatus, distanceFromHubMeters, distanceToDestinationMeters — for the popup, sourced from the backend (never recomputed client-side)
  */
-export default function MapView({
-  vehicle, hub, destination, route,
-  vehicleStatus, distanceFromHubMeters, distanceToDestinationMeters,
-}) {
+export default function MapView({ vehicle, hub, destination, route }) {
   const containerRef  = useRef(null)
   const mapRef        = useRef(null)
   const vehicleMarker = useRef(null)
@@ -147,30 +143,17 @@ export default function MapView({
     const bounds = []
 
     // ── Vehicle marker ──
+    // No popup/tooltip on this marker at all — per design, the vehicle's
+    // status/location/distances are shown in the ResultCard panel above
+    // the map instead, so clicking or hovering the marker itself does
+    // nothing. (Depot/Destination markers below still get a small label
+    // popup — only the vehicle marker's popup was the problem.)
     if (vehicleMarker.current) {
       vehicleMarker.current.setLatLng([lat, lng])
     } else {
-      vehicleMarker.current = L.marker([lat, lng], { icon: vehicleIcon }).addTo(map)
+      vehicleMarker.current = L.marker([lat, lng], { icon: vehicleIcon, interactive: false }).addTo(map)
     }
     bounds.push([lat, lng])
-
-    const statusColor = vehicleStatus === 'Reached' ? '#4ADE80' : vehicleStatus === 'At Hub' ? '#FB923C' : '#4ADE80'
-    const statusSnippet = vehicleStatus ? `
-      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1E293B;">
-        <div style="font-size:10px;color:${statusColor};font-weight:600;margin-bottom:3px;">${vehicleStatus}</div>
-        ${distanceFromHubMeters != null ? `<div style="font-size:10px;color:#64748B;font-family:'JetBrains Mono',monospace;">📍 ${(distanceFromHubMeters/1000).toFixed(2)} km from hub (road)</div>` : ''}
-        ${distanceToDestinationMeters != null ? `<div style="font-size:10px;color:#64748B;font-family:'JetBrains Mono',monospace;">🏁 ${(distanceToDestinationMeters/1000).toFixed(2)} km to destination (road)</div>` : ''}
-      </div>
-    ` : ''
-
-    vehicleMarker.current.bindPopup(`
-      <div style="font-family:'Outfit',sans-serif;padding:4px 2px;min-width:170px;">
-        <div style="font-weight:700;font-size:13px;color:#F1F5F9;margin-bottom:4px;">🚛 ${vehicle?.label || 'Vehicle'}</div>
-        ${vehicle?.address ? `<div style="font-size:11px;color:#94A3B8;line-height:1.4;">${vehicle.address}</div>` : ''}
-        <div style="font-size:10px;color:#64748B;margin-top:4px;font-family:'JetBrains Mono',monospace;">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
-        ${statusSnippet}
-      </div>
-    `).openPopup()
 
     // ── Depot marker ──
     if (hub?.latitude != null && hub?.longitude != null) {
@@ -218,8 +201,7 @@ export default function MapView({
 
     setTimeout(() => map.invalidateSize(), 100)
   }, [lat, lng, vehicle?.label, vehicle?.address, hub?.latitude, hub?.longitude,
-      destination?.latitude, destination?.longitude, route, vehicleStatus,
-      distanceFromHubMeters, distanceToDestinationMeters, hasVehicleCoords])
+      destination?.latitude, destination?.longitude, route, hasVehicleCoords])
 
   // Full destroy on component unmount
   useEffect(() => {

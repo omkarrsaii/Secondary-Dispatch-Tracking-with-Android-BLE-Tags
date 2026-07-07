@@ -40,13 +40,34 @@ const IconFileText = (p) => (
   </svg>
 )
 
+// Shipment status badge — "At Depot" / "In Transit" / "Reached" (or
+// "Unassigned" if no vehicle at all yet), sourced directly from the
+// backend (never re-derived client-side) so this always agrees with
+// whatever threshold/rule the backend actually used.
 function VehicleStatusBadge({ status }) {
-  if (status === 'Assigned') {
+  if (status === 'Reached') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border"
+            style={{ background: 'rgba(11,111,203,.1)', color: TEAL, borderColor: 'rgba(11,111,203,.22)' }}>
+        ✓ Reached
+      </span>
+    )
+  }
+  if (status === 'At Depot') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border"
+            style={{ background: 'rgba(217,119,6,.1)', color: '#D97706', borderColor: 'rgba(217,119,6,.25)' }}>
+        <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#D97706' }} />
+        At Depot
+      </span>
+    )
+  }
+  if (status === 'In Transit') {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border"
             style={{ background: 'rgba(94,159,43,.12)', color: MG_DK, borderColor: 'rgba(94,159,43,.25)' }}>
         <span className="w-1.5 h-1.5 rounded-full pulse-dot" style={{ background: MG_DK }} />
-        Assigned
+        In Transit
       </span>
     )
   }
@@ -57,24 +78,30 @@ function VehicleStatusBadge({ status }) {
   )
 }
 
-function DistanceBadge({ distanceMeters, reached }) {
+// Current location + remaining road distance — the distance shown here is
+// ALWAYS the remaining road route (vehicle → destination) from the
+// backend's routing engine, never a straight-line number. Location sits
+// on its own line above the distance so a longer locality name doesn't
+// crowd the number next to it — still compact (2 short lines), just
+// readable instead of a single cramped line.
+function LocationAndDistance({ location, distanceMeters, reached }) {
   if (reached) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border"
-            style={{ background: 'rgba(11,111,203,.1)', color: TEAL, borderColor: 'rgba(11,111,203,.22)' }}>
-        ✓ Reached
-      </span>
-    )
+    return <span className="text-[11px] text-mist">Delivered</span>
   }
-  if (distanceMeters == null) return <span className="text-[11px] text-mist">—</span>
-  const label = distanceMeters >= 1000
-    ? `${(distanceMeters / 1000).toFixed(1)} km away`
-    : `${distanceMeters} m away`
+  const distanceLabel = distanceMeters == null ? null : (
+    distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(1)} km away` : `${distanceMeters} m away`
+  )
+  if (!location && !distanceLabel) return <span className="text-[11px] text-mist">—</span>
   return (
-    <span className="flex items-center gap-1 text-[11px] font-mono text-slate">
-      <IconMapPin style={{ color: MG }} />
-      {label}
-    </span>
+    <div className="text-right max-w-[130px]">
+      {location && <p className="text-[11px] font-medium text-slate truncate" title={location}>{location}</p>}
+      {distanceLabel && (
+        <p className="flex items-center justify-end gap-1 text-[11px] font-mono text-slate/70 mt-0.5">
+          <IconMapPin style={{ color: MG, width: 9, height: 9 }} />
+          {distanceLabel}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -120,7 +147,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
   useEffect(() => { loadInvoices(1, false) }, [distributorCode])
 
   const reached  = invoices.filter(i => i.reached).length
-  const assigned = invoices.filter(i => i.vehicleStatus === 'Assigned').length
+  const assigned = invoices.filter(i => i.vehicleStatus && i.vehicleStatus !== 'Not Assigned').length
 
   return (
     <div className="min-h-dvh dot-grid flex flex-col">
@@ -214,7 +241,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
                   </div>
                   <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                     <VehicleStatusBadge status={inv.vehicleStatus} />
-                    <DistanceBadge distanceMeters={inv.distanceMeters} reached={inv.reached} />
+                    <LocationAndDistance location={inv.location} distanceMeters={inv.distanceMeters} reached={inv.reached} />
                   </div>
                   <IconChevronRight className="text-rim group-hover:text-slate transition-colors flex-shrink-0" />
                 </button>

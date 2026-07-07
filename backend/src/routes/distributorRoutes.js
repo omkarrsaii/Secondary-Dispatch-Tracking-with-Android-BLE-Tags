@@ -27,7 +27,7 @@ function notFound(res, code) {
 
 // ─── POST /api/distributor/login ──────────────────────────────────────────────
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     const code = String(req.body?.distributorCode || '').trim();
     if (!code) {
@@ -38,7 +38,7 @@ router.post('/login', (req, res) => {
       return notFound(res, code);
     }
 
-    const summary = getDistributorSummary(code);
+    const summary = await getDistributorSummary(code);
     logger.info(`Distributor login: ${code} (${summary.totalActiveInvoices} active invoices)`);
     res.json({ success: true, ...summary });
   } catch (err) {
@@ -49,11 +49,11 @@ router.post('/login', (req, res) => {
 
 // ─── GET /api/distributor/:code/summary ───────────────────────────────────────
 
-router.get('/:code/summary', (req, res) => {
+router.get('/:code/summary', async (req, res) => {
   try {
     const code = String(req.params.code || '').trim();
     if (!isValidDistributorCode(code)) return notFound(res, code);
-    res.json(getDistributorSummary(code));
+    res.json(await getDistributorSummary(code));
   } catch (err) {
     logger.error('GET /api/distributor/:code/summary error: ' + err.message);
     res.status(500).json({ error: 'INTERNAL_ERROR', message: 'An unexpected error occurred.' });
@@ -62,13 +62,13 @@ router.get('/:code/summary', (req, res) => {
 
 // ─── GET /api/distributor/:code/invoices ──────────────────────────────────────
 
-router.get('/:code/invoices', (req, res) => {
+router.get('/:code/invoices', async (req, res) => {
   try {
     const code = String(req.params.code || '').trim();
     if (!isValidDistributorCode(code)) return notFound(res, code);
 
     const { page, limit } = req.query;
-    res.json(getPaginatedInvoices(code, page, limit));
+    res.json(await getPaginatedInvoices(code, page, limit));
   } catch (err) {
     logger.error('GET /api/distributor/:code/invoices error: ' + err.message);
     res.status(500).json({ error: 'INTERNAL_ERROR', message: 'An unexpected error occurred.' });

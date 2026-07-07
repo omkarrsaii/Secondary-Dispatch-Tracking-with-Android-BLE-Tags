@@ -161,9 +161,6 @@ export default function InvoiceTracker({ initialInvoice, onBack }) {
                 hub={data.hub}
                 destination={data.destination}
                 route={data.route}
-                vehicleStatus={data.vehicleStatus}
-                distanceFromHubMeters={data.distanceFromHubMeters}
-                distanceToDestinationMeters={data.distanceToDestinationMeters}
               />
             )}
             <p className="text-center text-xs text-slate/50 pt-2">
