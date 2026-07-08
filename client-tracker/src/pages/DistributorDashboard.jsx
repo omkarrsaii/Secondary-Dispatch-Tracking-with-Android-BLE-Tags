@@ -160,7 +160,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
           </div>
           <div className="min-w-0">
             <p className="font-extrabold text-sm leading-tight" style={{ color: MB }}>Marico</p>
-            <p className="text-[10px] text-slate tracking-widest uppercase leading-none mt-0.5 font-mono">Distributor Vehicle Tracking Portal</p>
+            <p className="text-[10px] text-slate tracking-widest uppercase leading-none mt-0.5 font-mono">Distributor Portal</p>
           </div>
           <button
             onClick={onSignOut}
@@ -178,7 +178,7 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
         <div className="mb-5 animate-fade-up">
           <p className="text-[11px] text-slate uppercase tracking-widest font-semibold mb-1">Welcome back</p>
           <h1 className="font-extrabold text-2xl leading-tight" style={{ color: MB }}>
-            {distributorCode} # {distributorName}
+            {distributorName}
           </h1>
         </div>
 
@@ -237,7 +237,18 @@ export default function DistributorDashboard({ distributor, onInvoiceClick, onSi
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="font-bold text-sm font-mono" style={{ color: MB }}>{inv.invoiceNo}</p>
-                    <p className="text-[11px] text-slate mt-0.5">{formatDate(inv.invoiceDate)}</p>
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5 text-[11px] text-slate">
+                      <span>{formatDate(inv.invoiceDate)}</span>
+                      {inv.vehicleNo && (
+                        <>
+                          <span className="text-rim">•</span>
+                          <span className="flex items-center gap-1 font-mono text-slate/80">
+                            <IconTruck style={{ width: 10, height: 10 }} />
+                            {inv.vehicleNo}
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
                   <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                     <VehicleStatusBadge status={inv.vehicleStatus} />

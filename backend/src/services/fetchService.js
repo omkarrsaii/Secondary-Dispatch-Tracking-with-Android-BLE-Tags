@@ -1,6 +1,6 @@
 const { fetchAllDevices } = require('./browserService');
 const { reverseGeocode } = require('./geocodeService');
-const { upsertDevice, insertHistory, setAppState } = require('../db/database');
+const { upsertDevice, insertHistory, setAppState, getDeviceByName } = require('../db/database');
 const { runGeofenceCheck, runDepartureTimeCheck } = require('./geofenceService');
 const logger = require('../utils/logger');
 
@@ -30,7 +30,24 @@ async function runFetch() {
           ? await reverseGeocode(device.latitude, device.longitude)
           : { locality: null, city: null, state: null, country: null };
 
-        const deviceData = { ...device, locality: geo.locality, city: geo.city, state: geo.state, country: geo.country };
+        // A single transient reverse-geocode failure (network hiccup,
+        // Nominatim rate-limit, a corporate firewall blocking it — same
+        // class of issue as the OSRM demo server being blocked) must
+        // never overwrite an already-known-good locality/city with null.
+        // Without this, "Current Location" and "Distance From Hub" can
+        // silently go from "Jawahar Nagar Colony" to "Location
+        // unavailable" on the very next fetch cycle, even though the
+        // vehicle hasn't actually gone anywhere unresolvable — only the
+        // geocode call for THIS cycle failed.
+        const existing = getDeviceByName(device.device_name);
+        const resolvedGeo = {
+          locality: geo.locality || existing?.locality || null,
+          city:     geo.city    || existing?.city      || null,
+          state:    geo.state   || existing?.state      || null,
+          country:  geo.country || existing?.country     || null,
+        };
+
+        const deviceData = { ...device, ...resolvedGeo };
         const deviceId = upsertDevice(deviceData);
         insertHistory(deviceId, {
           latitude: device.latitude,

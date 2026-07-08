@@ -36,7 +36,7 @@ const GEOFENCE_RADIUS_METERS = parseInt(process.env.GEOFENCE_RADIUS_METERS) || 5
 // ── Hub location (Change: dynamic Active Invoice status) ──────────────────────
 // Same HUB_LAT/HUB_LON convention already used by dashboardRoutes.js and
 // routeRoutes.js for "is this vehicle out for delivery" — reused here so the
-// Hierarchy Active Invoice List's "At Hub" status agrees with the rest of
+// Hierarchy Active Invoice List's "At Depot" status agrees with the rest of
 // the app instead of re-deriving its own hub coordinates.
 const HUB_LAT = parseFloat(process.env.HUB_LAT || '17.608504');
 const HUB_LON = parseFloat(process.env.HUB_LON || '78.528605');
@@ -194,7 +194,7 @@ async function runGeofenceCheck() {
  * column the FIRST time it happens.
  *
  * "Out for delivery" uses the exact same >HUB_RADIUS_METERS-from-hub rule
- * the rest of the app already uses (kpiService's At Hub/In Transit labels,
+ * the rest of the app already uses (kpiService's At Depot/In Transit labels,
  * the Distributor Portal's own hub-distance badge) — so Departure Time
  * always lines up with what every other part of the app calls "left the
  * hub", instead of a fourth, independently-tuned definition.

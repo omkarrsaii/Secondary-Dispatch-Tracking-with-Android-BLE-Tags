@@ -23,6 +23,7 @@
 
 const { getAllInvoiceMappings, getDeviceByVehicle } = require('./mappingService');
 const { getDeviceByName } = require('../db/database');
+const { formatDeviceLocation } = require('../utils/geoUtils');
 const logger = require('../utils/logger');
 
 // Lazy require to dodge any load-order edge case — geofenceService doesn't
@@ -134,7 +135,7 @@ async function enrichInvoiceForList(m) {
   const device = deviceName ? getDeviceByName(deviceName) : null;
 
   if (device) {
-    base.location = device.locality || device.city || null;
+    base.location = formatDeviceLocation(device);
   }
 
   // Remaining road distance (vehicle → destination) — same routing engine

@@ -171,7 +171,7 @@ function getLiveLocationLabel(vehicleNo) {
  * whose raw sheet Status cell is still blank) using the vehicle's latest
  * BLE/GPS position:
  *
- *   - "At Hub"     — vehicle is within HUB_RADIUS_METERS (1km) of the hub.
+ *   - "At Depot"     — vehicle is within HUB_RADIUS_METERS (1km) of the hub.
  *   - "Reached"    — vehicle is within GEOFENCE_RADIUS_METERS (500m) of
  *                    the distributor location.
  *   - "In Transit" — neither of the above (out of the hub geofence, not
@@ -179,9 +179,9 @@ function getLiveLocationLabel(vehicleNo) {
  *   - "In Transit" is also the fallback when there's no live location yet
  *     (no device mapped / device hasn't reported coordinates) — a
  *     dispatched invoice with no fix is presumed en route rather than
- *     shown as "at hub".
+ *     shown as "At Depot".
  *
- * Distributor proximity is checked first: a vehicle can only be "at hub"
+ * Distributor proximity is checked first: a vehicle can only be "At Depot"
  * OR "reached" at any given moment, and reaching the destination is the
  * more specific, more useful signal to surface.
  */
@@ -193,7 +193,7 @@ function deriveLiveStatus(vehicleNo, distributorCode) {
 
   const distanceToHub = geofence.getDistanceToHubMeters(vehicleNo);
   if (distanceToHub != null && distanceToHub <= geofence.HUB_RADIUS_METERS) {
-    return { label: 'At Hub', distanceToHub, distanceToDistributor };
+    return { label: 'At Depot', distanceToHub, distanceToDistributor };
   }
 
   return { label: 'In Transit', distanceToHub, distanceToDistributor };
@@ -205,7 +205,7 @@ function deriveLiveStatus(vehicleNo, distributorCode) {
  *
  * Status:
  *   - Active invoices (blank Status AND blank Remarks in the sheet) show a
- *     DERIVED, live location-based label — "At Hub" / "In Transit" /
+ *     DERIVED, live location-based label — "At Depot" / "In Transit" /
  *     "Reached" — via deriveLiveStatus(), instead of a static "Pending".
  *   - Non-active (historical/completed) invoices show the ACTUAL raw sheet
  *     Status value as-is (e.g. "Reached", "Unloaded") — these only ever

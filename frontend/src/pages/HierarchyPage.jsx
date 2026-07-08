@@ -41,12 +41,12 @@ function VehicleStatusPill({ status }) {
   return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-m-bg border border-m-border text-m-muted">Not Assigned</span>
 }
 
-// Live, location-derived status pill for the Invoice List — "At Hub" /
+// Live, location-derived status pill for the Invoice List — "At Depot" /
 // "In Transit" / "Reached" for active invoices, or the raw historical
 // sheet status (e.g. "Reached", "Unloaded") for completed rows in the
 // All Invoices view.
 const STATUS_STYLES = {
-  'At Hub':     { bg:'rgba(11,111,203,.10)',  color:TEAL,  border:'rgba(11,111,203,.25)' },
+  'At Depot':     { bg:'rgba(11,111,203,.10)',  color:TEAL,  border:'rgba(11,111,203,.25)' },
   'In Transit': { bg:'rgba(217,119,6,.10)',   color:AMBER, border:'rgba(217,119,6,.25)' },
   'Reached':    { bg:'rgba(94,159,43,.12)',   color:MG_DK, border:'rgba(94,159,43,.25)' },
 }

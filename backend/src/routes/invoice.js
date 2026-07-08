@@ -22,6 +22,7 @@ const fs      = require('fs');
 const logger = require('../utils/logger');
 const { getDeviceByName } = require('../db/database');
 const md = require('../services/masterDataService');
+const { formatDeviceLocation } = require('../utils/geoUtils');
 const {
   resolveInvoice,
   syncFromGoogleSheets,
@@ -162,6 +163,11 @@ async function trackInvoice(invoiceNo, res) {
     deviceName: resolution.deviceName,
     meta:       resolution.meta,
     vehicleStatus,
+    // Same field, same helper (formatDeviceLocation), same underlying
+    // device row as the Distributor Portal's Active Invoices list
+    // (distributorPortalService.js) — so the two pages can never show a
+    // different location string for the same vehicle.
+    currentLocation: formatDeviceLocation(deviceRecord),
     location: {
       latitude:  vehicleLat,
       longitude: vehicleLon,

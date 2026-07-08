@@ -15,4 +15,21 @@ function getDistanceInKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-module.exports = { getDistanceInKm };
+/**
+ * Single source of truth for "what do we call this vehicle's current
+ * location" — used by BOTH the Distributor Portal's Active Invoices list
+ * (distributorPortalService.js) and the invoice tracking detail page
+ * (routes/invoice.js), so the two can never show two different strings
+ * for the same vehicle. Prefers the granular locality/area (e.g.
+ * "Dundigal") over the city, with state appended for context — e.g.
+ * "Dundigal, Telangana" — since a bare city name is too coarse to be
+ * useful for "where is my delivery right now".
+ */
+function formatDeviceLocation(device) {
+  if (!device) return null;
+  const primary = device.locality || device.city || null;
+  if (!primary) return null;
+  return [primary, device.state].filter(Boolean).join(', ');
+}
+
+module.exports = { getDistanceInKm, formatDeviceLocation };
