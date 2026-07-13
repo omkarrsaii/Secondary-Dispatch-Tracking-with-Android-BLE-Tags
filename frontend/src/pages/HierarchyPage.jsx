@@ -508,7 +508,7 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-[11px] font-semibold text-m-muted uppercase tracking-widest border-b border-m-border bg-m-bg">
-                    {['Invoice No', showAsmCol&&'ASM Area', showHqCol&&'HQ', 'Distributor','Status','Location','Vehicle','Last Updated','Dispatch Date','Age'].filter(Boolean).map(h => (
+                    {['Invoice No', showAsmCol&&'ASM Area', showHqCol&&'HQ', 'Distributor','Status','Location','Vehicle','Date','Dispatch Date','Age'].filter(Boolean).map(h => (
                       <th key={h} className="px-4 py-2.5 font-semibold">{h}</th>
                     ))}
                   </tr>
