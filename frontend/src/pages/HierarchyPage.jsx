@@ -168,8 +168,7 @@ function InvoiceTrackingModal({ invoiceNo, onClose }) {
           {error && <ErrBanner msg={error} />}
           {detail && !loading && !error && (
             <div className="space-y-3">
-              <div className="flex justify-center py-1"><VehicleStatusPill status={detail.vehicleStatus} /></div>
-              {[['Distributor',`${detail.distributorName||''} ${detail.distributorCode?`(${detail.distributorCode})`:''}`],['ASM Area',detail.asmArea],['HQ',detail.tsoeName],['Status',detail.status],['Vehicle No.',detail.vehicleNo||'—'],['Invoice Date',formatInvoiceDate(detail.invoiceDate)],['Appt. Date',formatInvoiceDate(detail.appointmentDate)],['Dispatch Date',detail.dispatchDate?formatInvoiceDate(detail.dispatchDate):null],['Age',detail.ageDays!=null?`${detail.ageDays} Days`:'--']]
+              {[['Distributor',`${detail.distributorName||''} ${detail.distributorCode?`(${detail.distributorCode})`:''}`],['ASM Area',detail.asmArea],['HQ',detail.tsoeName],['Status',detail.status],['Vehicle No.',detail.vehicleNo||'—'],['Invoice Date',formatInvoiceDate(detail.invoiceDate)],['Appt. Date',formatInvoiceDate(detail.appointmentDate)],['Dispatch Date',detail.dispatchDate?formatInvoiceDate(detail.dispatchDate):null],['Departure Time',detail.departureTime||null],['Arrival Time',detail.arrivalTime||null],['Age',detail.ageDays!=null?`${detail.ageDays} Days`:'--']]
                 .filter(([,v])=>v).map(([label,value])=>(
                   <div key={label} className="flex items-start justify-between border-b border-m-border/50 pb-2">
                     <span className="text-xs text-m-muted">{label}</span>
@@ -508,7 +507,7 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-[11px] font-semibold text-m-muted uppercase tracking-widest border-b border-m-border bg-m-bg">
-                    {['Invoice No', showAsmCol&&'ASM Area', showHqCol&&'HQ', 'Distributor','Status','Location','Vehicle','Date','Dispatch Date','Age'].filter(Boolean).map(h => (
+                    {['Invoice No', showAsmCol&&'ASM Area', showHqCol&&'HQ', 'Distributor','Vehicle','Status','Location','Date','Dispatch Date','Age'].filter(Boolean).map(h => (
                       <th key={h} className="px-4 py-2.5 font-semibold">{h}</th>
                     ))}
                   </tr>
@@ -520,9 +519,9 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
                       {showAsmCol && <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.asmArea||'—'}</td>}
                       {showHqCol  && <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.tsoeName||'—'}</td>}
                       <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.distributorName||inv.distributorCode}</td>
+                      <td className="px-4 py-2.5 text-m-text font-mono whitespace-nowrap text-xs">{inv.vehicleNo||'—'}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap"><InvoiceStatusPill status={inv.status} /></td>
                       <td className="px-4 py-2.5 text-m-text whitespace-nowrap text-xs flex items-center gap-1"><MapPin size={11} className="text-m-muted flex-shrink-0" />{inv.location||'—'}</td>
-                      <td className="px-4 py-2.5 whitespace-nowrap"><VehicleStatusPill status={inv.vehicleStatus} /></td>
                       <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{formatInvoiceDate(inv.lastUpdated)}</td>
                       <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{formatInvoiceDate(inv.dispatchDate)}</td>
                       <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{inv.ageDays!=null?`${inv.ageDays} Days`:'--'}</td>

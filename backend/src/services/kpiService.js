@@ -270,6 +270,11 @@ function enrichInvoiceRow(m, todayMs) {
     appointmentDate: m.appointmentDate || null,
     lastUpdated:     m.invoiceDate || null,     // Sheet Column B — unchanged
     dispatchDate:    m.dispatchDate || null,    // Sheet Column S
+    // ── Added for Tracking popup — Departure/Arrival Time columns from the
+    // Invoice sheet. null when the cell is blank so the frontend can omit
+    // the row entirely rather than show a placeholder. ──
+    departureTime:   m.departureTime || null,
+    arrivalTime:     m.arrivalTime   || null,
     ageDays,
   };
 }
