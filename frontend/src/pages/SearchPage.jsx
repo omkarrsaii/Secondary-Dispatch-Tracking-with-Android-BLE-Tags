@@ -93,7 +93,7 @@ function InvoiceDetailModal({ invoiceNo, onClose }) {
             <DetailRow label="Vehicle No."   value={detail.vehicleNo||'—'} />
             <DetailRow label="Invoice Date"  value={formatDate(detail.invoiceDate)} />
             <DetailRow label="Appt. Date"    value={formatDate(detail.appointmentDate)} />
-            <DetailRow label="Age"           value={detail.ageDays!=null ? `${detail.ageDays} day(s)` : null} />
+            <DetailRow label="Delay"         value={detail.ageDays!=null ? `${detail.ageDays} day(s)` : null} />
           </div>
           {detail.tracking && (
             <div className="rounded-xl border border-m-border bg-m-bg p-3 space-y-2 mt-1">

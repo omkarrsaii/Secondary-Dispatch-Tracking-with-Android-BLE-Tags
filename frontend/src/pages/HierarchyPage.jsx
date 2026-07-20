@@ -168,7 +168,7 @@ function InvoiceTrackingModal({ invoiceNo, onClose }) {
           {error && <ErrBanner msg={error} />}
           {detail && !loading && !error && (
             <div className="space-y-3">
-              {[['Distributor',`${detail.distributorName||''} ${detail.distributorCode?`(${detail.distributorCode})`:''}`],['ASM Area',detail.asmArea],['HQ',detail.tsoeName],['Status',detail.status],['Vehicle No.',detail.vehicleNo||'—'],['Invoice Date',formatInvoiceDate(detail.invoiceDate)],['Appt. Date',formatInvoiceDate(detail.appointmentDate)],['Dispatch Date',detail.dispatchDate?formatInvoiceDate(detail.dispatchDate):null],['Departure Time',detail.departureTime||null],['Arrival Time',detail.arrivalTime||null],['Age',detail.ageDays!=null?`${detail.ageDays} Days`:'--']]
+              {[['Distributor',`${detail.distributorName||''} ${detail.distributorCode?`(${detail.distributorCode})`:''}`],['ASM Area',detail.asmArea],['HQ',detail.tsoeName],['Status',detail.status],['Vehicle No.',detail.vehicleNo||'—'],['Invoice Date',formatInvoiceDate(detail.invoiceDate)],['Appt. Date',formatInvoiceDate(detail.appointmentDate)],['Dispatch Date',detail.dispatchDate?formatInvoiceDate(detail.dispatchDate):null],['Departure Time',detail.departureTime||null],['Arrival Time',detail.arrivalTime||null],['Delay',detail.ageDays!=null?`${detail.ageDays} Days`:'--']]
                 .filter(([,v])=>v).map(([label,value])=>(
                   <div key={label} className="flex items-start justify-between border-b border-m-border/50 pb-2">
                     <span className="text-xs text-m-muted">{label}</span>
@@ -507,7 +507,7 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-[11px] font-semibold text-m-muted uppercase tracking-widest border-b border-m-border bg-m-bg">
-                    {['Invoice No', showAsmCol&&'ASM Area', showHqCol&&'HQ', 'Distributor','Vehicle','Status','Location','Date','Dispatch Date','Age'].filter(Boolean).map(h => (
+                    {['Date','Vehicle No.', showAsmCol&&'ASM Area', showHqCol&&'HQ', 'Distributor','Invoice No.','Status','Location','Dispatch Date','Delay'].filter(Boolean).map(h => (
                       <th key={h} className="px-4 py-2.5 font-semibold">{h}</th>
                     ))}
                   </tr>
@@ -515,14 +515,18 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
                 <tbody className="divide-y divide-m-border/50">
                   {invoices.map(inv => (
                     <tr key={inv.invoiceNo} onClick={() => setTrackingInvoice(inv.invoiceNo)} className="cursor-pointer hover:bg-m-bg transition-colors">
-                      <td className="px-4 py-2.5 font-mono text-m-text font-semibold whitespace-nowrap">{inv.invoiceNo}</td>
+                      {inv.isGroupFirst!==false && (
+                        <td rowSpan={inv.groupSize||1} className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs align-top">{formatInvoiceDate(inv.lastUpdated)}</td>
+                      )}
+                      {inv.isGroupFirst!==false && (
+                        <td rowSpan={inv.groupSize||1} className="px-4 py-2.5 text-m-text font-mono whitespace-nowrap text-xs align-top">{inv.vehicleNo||'—'}</td>
+                      )}
                       {showAsmCol && <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.asmArea||'—'}</td>}
                       {showHqCol  && <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.tsoeName||'—'}</td>}
                       <td className="px-4 py-2.5 text-m-text whitespace-nowrap">{inv.distributorName||inv.distributorCode}</td>
-                      <td className="px-4 py-2.5 text-m-text font-mono whitespace-nowrap text-xs">{inv.vehicleNo||'—'}</td>
+                      <td className="px-4 py-2.5 font-mono text-m-text font-semibold whitespace-nowrap">{inv.invoiceNo}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap"><InvoiceStatusPill status={inv.status} /></td>
                       <td className="px-4 py-2.5 text-m-text whitespace-nowrap text-xs flex items-center gap-1"><MapPin size={11} className="text-m-muted flex-shrink-0" />{inv.location||'—'}</td>
-                      <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{formatInvoiceDate(inv.lastUpdated)}</td>
                       <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{formatInvoiceDate(inv.dispatchDate)}</td>
                       <td className="px-4 py-2.5 text-m-muted whitespace-nowrap text-xs">{inv.ageDays!=null?`${inv.ageDays} Days`:'--'}</td>
                     </tr>

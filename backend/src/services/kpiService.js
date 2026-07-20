@@ -20,6 +20,27 @@ const { getAllInvoiceMappings, getDeviceByVehicle } = require('./mappingService'
 const { getDeviceByName } = require('../db/database');
 const { isActiveInvoice, toComparableDate } = require('./distributorPortalService');
 const geofence = require('./geofenceService');
+const routing  = require('./routingService');
+
+// Same HUB_LAT/HUB_LON convention as geofenceService.js — reused here so
+// "distance from depot" for route-sequence sorting agrees with the hub
+// location used everywhere else in the app, instead of a second,
+// independently-configured value.
+const HUB_LAT = parseFloat(process.env.HUB_LAT || '17.608504');
+const HUB_LON = parseFloat(process.env.HUB_LON || '78.528605');
+
+/**
+ * An invoice is only ever shown if its Invoice No. is EXACTLY 10 numeric
+ * digits — no letters, spaces, hyphens, or other characters, and no
+ * shorter/longer values. Applied as a base-level filter (same place the
+ * distributor-code/date filters apply) so the Active Invoice List, the
+ * All Invoices view, and the KPI cards all agree on the same underlying
+ * set of invoices, rather than the table silently disagreeing with the
+ * KPI counts above it.
+ */
+function isValidInvoiceNo(invoiceNo) {
+  return /^\d{10}$/.test(String(invoiceNo || '').trim());
+}
 
 // Start of "today" (local server time) — used for the overdue check.
 function startOfTodayMs() {
@@ -75,7 +96,7 @@ function buildKpisForDistributorCodes(distributorCodes, filters = {}) {
     (distributorCodes || []).map(c => String(c || '').trim()).filter(Boolean)
   );
   const all   = getAllInvoiceMappings();
-  let   group = all.filter(m => codes.has(String(m.distributorCode || '').trim()));
+  let   group = all.filter(m => codes.has(String(m.distributorCode || '').trim()) && isValidInvoiceNo(m.invoiceNo));
   group = applyFilters(group, filters);
 
   const totalInvoices    = group.length;
@@ -280,6 +301,89 @@ function enrichInvoiceRow(m, todayMs) {
 }
 
 /**
+ * Resolves the mapped ROAD distance (meters) from the depot/hub to a
+ * distributor's location, for every distinct distributor code appearing
+ * in a set of rows — in ONE batch, deduplicated, using the same
+ * routingService (OSRM) already used elsewhere in the app for road
+ * distances, never straight-line/geodesic or alphabetical.
+ *
+ * Falls back to null (never a fabricated number) when the distributor
+ * isn't in the Distributor Location sheet, or the routing engine can't
+ * resolve a route — rows with a null distance sort to the END of their
+ * group rather than being dropped.
+ */
+async function attachRouteDistancesFromDepot(rows) {
+  const uniqueCodes = [...new Set(rows.map(r => r.distributorCode).filter(Boolean))];
+  const distanceByCode = new Map();
+
+  await Promise.all(uniqueCodes.map(async code => {
+    const loc = md.getDistributorLocation(code);
+    if (!loc || loc.latitude == null || loc.longitude == null) {
+      distanceByCode.set(code, null);
+      return;
+    }
+    try {
+      const meters = await routing.getRoadDistanceMeters(HUB_LAT, HUB_LON, loc.latitude, loc.longitude);
+      distanceByCode.set(code, meters);
+    } catch (err) {
+      logger.warn(`kpiService: route-distance lookup failed for distributor ${code} — ${err.message}`);
+      distanceByCode.set(code, null);
+    }
+  }));
+
+  return rows.map(r => ({
+    ...r,
+    routeDistanceFromDepotMeters: r.distributorCode ? (distanceByCode.get(r.distributorCode) ?? null) : null,
+  }));
+}
+
+/**
+ * Groups already-enriched rows by Vehicle No. + Date (the same "Date"
+ * column the UI shows — Invoice Date), sorts each group's rows by
+ * ascending mapped route distance from the depot (closest distributor
+ * first), orders the groups themselves newest-Date-first (same ordering
+ * the flat list used before grouping existed), and tags every row with
+ * groupKey/groupSize/isGroupFirst so the frontend can render the
+ * Date/Vehicle No. cells once per group instead of once per invoice.
+ *
+ * Invoices with no Vehicle No. can't be meaningfully grouped with
+ * anything else, so each becomes its own singleton group — this keeps
+ * them behaving exactly as before (one row, nothing merged).
+ */
+function groupAndOrderByVehicleAndDate(rows) {
+  const groups = new Map(); // key → rows[]
+  let soloSeq = 0;
+
+  for (const r of rows) {
+    const key = r.vehicleNo ? `${r.vehicleNo}|${r.lastUpdated}` : `__solo_${r.invoiceNo}_${soloSeq++}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+
+  const ordered = Array.from(groups.entries()).map(([key, groupRows]) => {
+    groupRows.sort((a, b) => {
+      const da = a.routeDistanceFromDepotMeters;
+      const db = b.routeDistanceFromDepotMeters;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;   // unresolved distance sorts last within the group
+      if (db == null) return -1;
+      return da - db;
+    });
+    return { key, groupRows, repDateMs: toComparableDate(groupRows[0].lastUpdated) };
+  });
+
+  ordered.sort((a, b) => b.repDateMs - a.repDateMs);
+
+  const out = [];
+  for (const g of ordered) {
+    g.groupRows.forEach((r, idx) => {
+      out.push({ ...r, groupKey: g.key, groupSize: g.groupRows.length, isGroupFirst: idx === 0 });
+    });
+  }
+  return out;
+}
+
+/**
  * Hierarchy-aware Invoice List — backs both the "Active Invoices" and
  * "All Invoices" views.
  *
@@ -290,14 +394,22 @@ function enrichInvoiceRow(m, todayMs) {
  *   - invoiceState ('all' | 'active' | 'overdue') is a sub-filter (based
  *     on Appointment Date vs today) that applies identically in both
  *     views, never to the KPI cards above it.
- * view: 'active' (default) — only currently-active deliveries, same rule
- *       (blank Status AND blank Remarks) used everywhere else in the app.
+ * view: 'active' (default) — every invoice belonging to a Vehicle+Date
+ *       group that still has AT LEAST ONE active invoice (blank Status
+ *       AND blank Remarks) in it — so a group stays in Active Invoices
+ *       until every invoice in it has been delivered, not the moment its
+ *       own Status flips. Rows are grouped by Vehicle No.+Date and, within
+ *       a group, sorted by mapped route distance from the depot.
  *       'all' — every invoice matching the scope/filters, active and
- *       historical alike. Historical rows show their actual sheet Status
- *       (e.g. "Reached"); active rows still get the live location-derived
- *       status.
+ *       historical alike, flat (no grouping). Historical rows show their
+ *       actual sheet Status (e.g. "Reached"); active rows still get the
+ *       live location-derived status.
+ *
+ * Async because the Active view needs mapped road-route distances
+ * (routingService/OSRM) to order each vehicle group — every caller must
+ * `await` this now.
  */
-function getInvoiceList({ scope, name, filters = {}, view = 'active' }) {
+async function getInvoiceList({ scope, name, filters = {}, view = 'active' }) {
   let codes = null;
 
   if (scope === 'cluster') {
@@ -314,14 +426,35 @@ function getInvoiceList({ scope, name, filters = {}, view = 'active' }) {
 
   const codesSet = new Set(codes.map(c => String(c || '').trim()).filter(Boolean));
   const all      = getAllInvoiceMappings();
-  let   group    = all.filter(m => codesSet.has(String(m.distributorCode || '').trim()));
+  let   group    = all.filter(m =>
+    codesSet.has(String(m.distributorCode || '').trim()) && isValidInvoiceNo(m.invoiceNo)
+  );
   group          = applyFilters(group, filters);
 
   const isAllView = view === 'all';
-  const base = isAllView ? group : group.filter(m => isActiveInvoice(m.status, m.remarks));
+  const today     = startOfTodayMs();
+  let rows;
 
-  const today = startOfTodayMs();
-  let rows = base.map(m => enrichInvoiceRow(m, today));
+  if (isAllView) {
+    rows = group.map(m => enrichInvoiceRow(m, today));
+  } else {
+    // Vehicle+Date group membership: a group is only dropped from Active
+    // Invoices once EVERY invoice in it is no longer active — so a group
+    // with even one still-INTRANSIT invoice keeps its already-REACHED
+    // invoices visible too, per the grouped-delivery requirement.
+    const byGroup = new Map();
+    for (const m of group) {
+      const key = m.vehicleNo ? `${m.vehicleNo}|${m.invoiceDate}` : `__solo_${m.invoiceNo}`;
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key).push(m);
+    }
+    const includedRaw = [];
+    for (const members of byGroup.values()) {
+      const hasActive = members.some(m => isActiveInvoice(m.status, m.remarks));
+      if (hasActive) includedRaw.push(...members);
+    }
+    rows = includedRaw.map(m => enrichInvoiceRow(m, today));
+  }
 
   // invoiceState sub-filter (On-Time / Overdue) applies identically in
   // both views — Appointment Date vs today is independent of whether the
@@ -330,13 +463,18 @@ function getInvoiceList({ scope, name, filters = {}, view = 'active' }) {
   if (filters.invoiceState === 'overdue') rows = rows.filter(r => r.isOverdue);
   else if (filters.invoiceState === 'active') rows = rows.filter(r => !r.isOverdue);
 
-  rows.sort((a, b) => toComparableDate(b.invoiceDate) - toComparableDate(a.invoiceDate));
-  return rows;
+  if (isAllView) {
+    rows.sort((a, b) => toComparableDate(b.invoiceDate) - toComparableDate(a.invoiceDate));
+    return rows;
+  }
+
+  rows = await attachRouteDistancesFromDepot(rows);
+  return groupAndOrderByVehicleAndDate(rows);
 }
 
 // Backward-compatible name — existing callers (and the route) can keep
 // using this; it's just getInvoiceList() pinned to the active view.
-function getActiveInvoiceList({ scope, name, filters = {}, view }) {
+async function getActiveInvoiceList({ scope, name, filters = {}, view }) {
   return getInvoiceList({ scope, name, filters, view: view || 'active' });
 }
 

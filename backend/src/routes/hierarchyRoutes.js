@@ -316,13 +316,13 @@ router.get('/kpis/tsoe/:name', (req, res) => {
 // distributorCode, invoiceState ('all'|'active'|'overdue'),
 // view ('active'|'all' — default 'active').
 
-router.get('/invoices', (req, res) => {
+router.get('/invoices', async (req, res) => {
   try {
     const { scope, name, dateFrom, dateTo, distributorCode, invoiceState, view } = req.query;
     if (!scope || !name) {
       return res.status(400).json({ error: 'MISSING_PARAMS', message: '"scope" and "name" are required.' });
     }
-    const rows = kpi.getInvoiceList({
+    const rows = await kpi.getInvoiceList({
       scope,
       name,
       filters: { dateFrom, dateTo, distributorCode, invoiceState },
