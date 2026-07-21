@@ -124,4 +124,77 @@ async function getRoadDistanceMeters(lat1, lon1, lat2, lon2) {
   return route ? route.distanceMeters : null;
 }
 
-module.exports = { getRoadRoute, getRoadDistanceMeters };
+/**
+ * Road route through an ORDERED list of stops — depot first, then every
+ * distributor stop in visiting order. Used for the Route Management map,
+ * which needs ONE continuous road-following path through every stop, not
+ * a fan of independently-computed point-to-point segments that might not
+ * join up cleanly at each stop.
+ *
+ * This is a single OSRM request with multiple waypoints (OSRM supports
+ * this natively via semicolon-separated coordinates), not N separate
+ * getRoadRoute() calls stitched together — same routing engine, same
+ * fallback philosophy as getRoadRoute(), just multi-stop.
+ *
+ * @param {{lat:number, lon:number}[]} points - in visiting order, depot first.
+ * @returns {Promise<{distanceMeters:number, durationSeconds:number|null, geometry:[number,number][], source:'osrm'|'straight-line'}|null>}
+ *          null when fewer than 2 usable (non-null, numeric) points are given.
+ */
+async function getMultiStopRoute(points) {
+  const usable = (points || []).filter(p =>
+    p && p.lat != null && p.lon != null && p.lat !== '' && p.lon !== '' &&
+    !isNaN(parseFloat(p.lat)) && !isNaN(parseFloat(p.lon))
+  ).map(p => ({ lat: parseFloat(p.lat), lon: parseFloat(p.lon) }));
+
+  if (usable.length < 2) return null;
+
+  const key    = 'multi:' + usable.map(p => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join('|');
+  const cached = routeCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+
+  try {
+    const coordsParam = usable.map(p => `${p.lon},${p.lat}`).join(';');
+    const url = `${OSRM_URL}/route/v1/driving/${coordsParam}`;
+    const response = await axios.get(url, {
+      params:     { overview: 'full', geometries: 'geojson', alternatives: false, steps: false },
+      timeout:    10000,
+      httpsAgent: OSRM_URL.startsWith('https') ? routeAgent : undefined,
+    });
+
+    const route = response.data?.routes?.[0];
+    if (!route) throw new Error('Routing engine returned no route');
+
+    const coords   = route.geometry?.coordinates || [];
+    const geometry = coords.length
+      ? coords.map(([lng, lat]) => [lat, lng])
+      : usable.map(p => [p.lat, p.lon]);
+
+    const result = {
+      distanceMeters:  Math.round(route.distance),
+      durationSeconds: Math.round(route.duration),
+      geometry,
+      source: 'osrm',
+    };
+    routeCache.set(key, { result, expiresAt: Date.now() + ROUTE_CACHE_TTL_MS });
+    return result;
+
+  } catch (err) {
+    logger.warn(`routingService: multi-stop OSRM request failed (${err.message}) — falling back to straight-line stop-to-stop segments for this route`);
+    const geometry = usable.map(p => [p.lat, p.lon]); // straight line through the stops, last resort only
+    let totalKm = 0;
+    for (let i = 1; i < usable.length; i++) {
+      totalKm += getDistanceInKm(usable[i - 1].lat, usable[i - 1].lon, usable[i].lat, usable[i].lon);
+    }
+    const fallback = {
+      distanceMeters:  Math.round(totalKm * 1000),
+      durationSeconds: null,
+      geometry,
+      source:          'straight-line',
+      fallbackReason:  err.message,
+    };
+    routeCache.set(key, { result: fallback, expiresAt: Date.now() + ROUTE_FALLBACK_CACHE_TTL_MS });
+    return fallback;
+  }
+}
+
+module.exports = { getRoadRoute, getRoadDistanceMeters, getMultiStopRoute };

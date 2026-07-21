@@ -13,7 +13,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     markerShadow,
 })
 
-// ── Vehicle marker — pulsing ember dot ──────────────────────────────────────
+// ── Vehicle marker — pulsing ember dot 
 const vehicleIcon = L.divIcon({
   className: '',
   html: `

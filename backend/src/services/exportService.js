@@ -1,9 +1,10 @@
 const ExcelJS = require('exceljs');
 const { getAllDevices } = require('../db/database');
+const { enrichDevicesWithVehicleAndStatus } = require('./deviceStatusService');
 const logger = require('../utils/logger');
 
 async function generateExcel() {
-  const devices = getAllDevices();
+  const devices = enrichDevicesWithVehicleAndStatus(getAllDevices());
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Find Hub Tracker';
   workbook.created = new Date();
@@ -20,8 +21,8 @@ async function generateExcel() {
     { header: 'City', key: 'city', width: 18 },
     { header: 'State', key: 'state', width: 18 },
     { header: 'Country', key: 'country', width: 15 },
-    { header: 'Battery %', key: 'battery', width: 12 },
-    { header: 'Network', key: 'network', width: 20 },
+    { header: 'Vehicle No.', key: 'vehicleNo', width: 16 },
+    { header: 'Status', key: 'status', width: 12 },
     { header: 'Last Seen', key: 'last_seen_text', width: 20 },
     { header: 'Last Fetch', key: 'last_fetch_time', width: 22 },
     { header: 'Google Maps Link', key: 'maps_link', width: 40 }
@@ -47,6 +48,7 @@ async function generateExcel() {
 
     const row = sheet.addRow({
       ...device,
+      vehicleNo: device.vehicleNo || 'Not Assigned',
       maps_link: mapsLink,
       last_fetch_time: device.last_fetch_time ? new Date(device.last_fetch_time).toLocaleString() : ''
     });
@@ -74,13 +76,13 @@ async function generateExcel() {
 }
 
 function generateCSV() {
-  const devices = getAllDevices();
+  const devices = enrichDevicesWithVehicleAndStatus(getAllDevices());
   const headers = ['Device Name', 'Latitude', 'Longitude', 'City', 'State', 'Country',
-                   'Battery %', 'Network', 'Last Seen', 'Last Fetch Time'];
+                   'Vehicle No.', 'Status', 'Last Seen', 'Last Fetch Time'];
 
   const rows = devices.map(d => [
     d.device_name, d.latitude, d.longitude, d.city, d.state, d.country,
-    d.battery, d.network, d.last_seen_text,
+    d.vehicleNo || 'Not Assigned', d.status, d.last_seen_text,
     d.last_fetch_time ? new Date(d.last_fetch_time).toLocaleString() : ''
   ]);
 

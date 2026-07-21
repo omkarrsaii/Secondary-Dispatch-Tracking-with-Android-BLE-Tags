@@ -1,15 +1,25 @@
 import { useNavigate } from 'react-router-dom'
-import { MapPin, Battery, Signal, ChevronRight } from 'lucide-react'
+import { MapPin, Signal, ChevronRight } from 'lucide-react'
 
-function BatteryDot({ pct }) {
-  if (pct == null) return <span className="text-m-muted/40 text-xs">—</span>
-  const n = parseInt(pct)
-  const color = n > 60 ? '#7DC242' : n > 25 ? '#D97706' : '#DC2626'
+function VehicleNoCell({ vehicleNo }) {
+  if (!vehicleNo) return <span className="text-xs text-m-muted">Not Assigned</span>
+  return <span className="text-xs font-mono font-semibold text-m-text">{vehicleNo}</span>
+}
+
+// Same green-pill / red-pill visual language as InvoiceStatusPill and
+// VehicleStatusPill elsewhere in the app (a filled dot + colored border-pill),
+// just with the Active/Inactive palette this column needs.
+function DeviceStatusPill({ status }) {
+  if (status === 'Active') return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border"
+          style={{ background:'rgba(94,159,43,.12)', color:'#5E9F2B', borderColor:'rgba(94,159,43,.25)' }}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current" />Active
+    </span>
+  )
   return (
-    <div className="flex items-center gap-1.5">
-      <Battery size={13} style={{ color }} />
-      <span className="text-xs font-mono font-medium" style={{ color }}>{n}%</span>
-    </div>
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-m-red-50 text-m-red border-m-red/25">
+      <span className="w-1.5 h-1.5 rounded-full bg-current" />Inactive
+    </span>
   )
 }
 
@@ -74,14 +84,14 @@ export default function DeviceRow({ device }) {
         </span>
       </td>
 
-      {/* Battery */}
+      {/* Vehicle No. */}
       <td className="px-4 py-3.5">
-        <BatteryDot pct={device.battery} />
+        <VehicleNoCell vehicleNo={device.vehicleNo} />
       </td>
 
-      {/* Network */}
+      {/* Status */}
       <td className="px-4 py-3.5">
-        <span className="text-xs text-m-muted">{device.network || '—'}</span>
+        <DeviceStatusPill status={device.status} />
       </td>
 
       {/* Last seen */}

@@ -5,6 +5,7 @@ const { runFetch, isSessionExpired, isFetching } = require('../services/fetchSer
 const { getSchedulerStatus, startScheduler, VALID_INTERVALS } = require('../services/schedulerService');
 const { generateExcel, generateCSV } = require('../services/exportService');
 const { hasSession } = require('../services/browserService');
+const { enrichDevicesWithVehicleAndStatus } = require('../services/deviceStatusService');
 const logger = require('../utils/logger');
 
 // GET /api/status
@@ -23,7 +24,7 @@ router.get('/status', (req, res) => {
 // GET /api/devices
 router.get('/devices', (req, res) => {
   try {
-    const devices = getAllDevices();
+    const devices = enrichDevicesWithVehicleAndStatus(getAllDevices());
     const formatted = devices.map(d => ({
       id: d.id,
       name: d.device_name,
@@ -33,8 +34,8 @@ router.get('/devices', (req, res) => {
       city: d.city,
       state: d.state,
       country: d.country,
-      battery: d.battery,
-      network: d.network,
+      vehicleNo: d.vehicleNo,
+      status: d.status,
       lastSeen: d.last_seen_text,
       imageUrl: d.image_url,
       lastFetch: d.last_fetch_time,

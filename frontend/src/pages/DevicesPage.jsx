@@ -13,7 +13,7 @@ export default function DevicesPage() {
     !search ||
     d.name?.toLowerCase().includes(search.toLowerCase()) ||
     d.location?.toLowerCase().includes(search.toLowerCase()) ||
-    d.network?.toLowerCase().includes(search.toLowerCase())
+    d.vehicleNo?.toLowerCase().includes(search.toLowerCase())
   )
 
   return (
@@ -28,7 +28,7 @@ export default function DevicesPage() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-m-muted" />
             <input
               type="text"
-              placeholder="Search by device, location, network…"
+              placeholder="Search by device, location, vehicle no…"
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full bg-m-surface border border-m-border rounded-xl pl-9 pr-4 py-2.5 text-sm text-m-text placeholder:text-m-muted/60 focus:outline-none focus:border-m-blue/50 transition-colors shadow-card"
@@ -71,7 +71,7 @@ export default function DevicesPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-m-border bg-m-bg">
-                    {['Device', 'Coordinates', 'Location', 'Battery', 'Network', 'Last Seen', ''].map(h => (
+                    {['Device', 'Coordinates', 'Location', 'Vehicle No.', 'Status', 'Last Seen', ''].map(h => (
                       <th key={h} className="px-4 py-2.5 text-left text-[11px] font-semibold text-m-muted uppercase tracking-widest">{h}</th>
                     ))}
                   </tr>

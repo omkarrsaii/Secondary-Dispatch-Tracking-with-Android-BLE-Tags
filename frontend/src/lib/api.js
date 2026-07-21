@@ -29,6 +29,8 @@ export const globalSearch = (q, type = '') =>
 export const getRoutes      = () => api.get('/routes').then(r => r.data)
 export const getRouteDetail = (name) =>
   api.get(`/routes/${encodeURIComponent(name)}`).then(r => r.data)
+export const getRouteMap    = (name) =>
+  api.get(`/routes/${encodeURIComponent(name)}/map`).then(r => r.data)
 export const getRouteStatus = () => api.get('/routes/status').then(r => r.data)
 export const syncRoutes     = () => api.post('/routes/sync').then(r => r.data)
 
