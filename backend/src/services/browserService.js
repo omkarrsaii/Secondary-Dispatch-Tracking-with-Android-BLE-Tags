@@ -86,12 +86,128 @@ async function saveDebugSnapshot(page, label) {
       body:  await page.evaluate(() => document.body?.innerText?.slice(0, 3000)).catch(() => ''),
       dataIndexCount:       await page.evaluate(() => document.querySelectorAll('[data-index]').length).catch(() => -1),
       dataLocationLatCount: await page.evaluate(() => document.querySelectorAll('[data-location-lat]').length).catch(() => -1),
+      // Full page HTML too — when [data-location-lat] has 0 matches, this is
+      // what tells us whether Google renamed the attribute or moved it into
+      // a shadow root, instead of guessing blind.
+      fullHtmlSaved: true,
     };
     fs.writeFileSync(path.join(DEBUG_DIR, `${label}-${ts}.txt`), JSON.stringify(info, null, 2));
+    const html = await page.content().catch(() => '');
+    if (html) fs.writeFileSync(path.join(DEBUG_DIR, `${label}-${ts}.html`), html);
     logger.info(`Snapshot → ${png}`);
     logger.info(`  URL: ${info.url} | [data-index]: ${info.dataIndexCount}`);
     logger.info(`  Body: ${info.body.slice(0, 200).replace(/\n+/g, ' ')}`);
   } catch (e) { logger.warn('Snapshot failed: ' + e.message); }
+}
+
+// ─── extractCoordinatesDeep ────────────────────────────────────────────────
+//
+// WHY THIS EXISTS: the original extractor only checked document.querySelectorAll
+// for `[data-location-lat]` / `gmp-advanced-marker` at the TOP-LEVEL light DOM.
+// If Google's Find Hub renders the map/marker inside a custom element's
+// shadow root (the Google Maps Extended Component Library elements it uses,
+// like <gmp-advanced-marker>/<gmp-map>, commonly do), a plain
+// document.querySelector simply never finds it — it returns null for every
+// device, including a plain phone with no "Sign in" gate at all, which is
+// exactly the symptom reported (all 4 devices, including a phone, coming
+// back null,null while the location is clearly visible in a real browser).
+//
+// This tries, in order, until one succeeds:
+//   1. [data-location-lat] — light DOM (original selector, kept first)
+//   2. [data-location-lat] — pierced through every shadow root on the page
+//   3. gmp-advanced-marker.position (Maps JS LatLng object) — light DOM
+//   4. gmp-advanced-marker.position — pierced through shadow roots
+//   5. A handful of other attribute names Google may have renamed this to
+//      (data-lat/data-latitude/aria-label with a "lat,lng" pattern), both
+//      light DOM and shadow-pierced
+//   6. Last resort: regex-scan the page's own HTML/inline JSON for a
+//      lat/lng-shaped pair inside plausible ranges — this is intentionally
+//      the least reliable strategy and is only used if nothing else matched,
+//      so it never silently overrides a real reading with a wrong guess.
+//
+// Returns { lat, lng, strategy } or { lat: null, lng: null, strategy: null }.
+async function extractCoordinatesDeep(page) {
+  return page.evaluate(() => {
+    // Recursively collect matches for `selector`, descending into every
+    // open shadow root found along the way — this is the piece the
+    // original code was missing entirely.
+    function deepQuerySelectorAll(selector, root = document) {
+      const found = Array.from(root.querySelectorAll(selector));
+      const all   = Array.from(root.querySelectorAll('*'));
+      for (const el of all) {
+        if (el.shadowRoot) found.push(...deepQuerySelectorAll(selector, el.shadowRoot));
+      }
+      return found;
+    }
+
+    function fromLatLngObject(pos) {
+      if (!pos) return null;
+      try {
+        if (typeof pos.lat === 'function') return { lat: String(pos.lat()), lng: String(pos.lng()) };
+      } catch {}
+      if (typeof pos.lat === 'number' && typeof pos.lng === 'number') {
+        return { lat: String(pos.lat), lng: String(pos.lng) };
+      }
+      return null;
+    }
+
+    // 1 & 2 — [data-location-lat], light DOM then shadow-pierced
+    for (const scope of [document.querySelectorAll('[data-location-lat]'), deepQuerySelectorAll('[data-location-lat]')]) {
+      for (const el of scope) {
+        if (el?.dataset?.locationLat) {
+          return { lat: el.dataset.locationLat, lng: el.dataset.locationLng, strategy: 'data-location-lat' };
+        }
+      }
+    }
+
+    // 3 & 4 — gmp-advanced-marker.position, light DOM then shadow-pierced
+    for (const [markers, strategy] of [
+      [Array.from(document.querySelectorAll('gmp-advanced-marker')), 'gmp-advanced-marker'],
+      [deepQuerySelectorAll('gmp-advanced-marker'), 'gmp-advanced-marker (shadow)'],
+    ]) {
+      for (const marker of markers) {
+        const fromProp = fromLatLngObject(marker.position);
+        if (fromProp) return { ...fromProp, strategy };
+        const posAttr = marker.getAttribute('gmp-clickable-position') || marker.getAttribute('position');
+        if (posAttr?.includes(',')) {
+          const [lat, lng] = posAttr.split(',').map(s => s.trim());
+          if (lat && lng) return { lat, lng, strategy: strategy + ' [attr]' };
+        }
+      }
+    }
+
+    // 5 — other attribute names Google may now use instead
+    const altAttrSelectors = [
+      '[data-lat][data-lng]', '[data-latitude][data-longitude]',
+      '[data-lat][data-lon]', '[aria-label*="Latitude"]',
+    ];
+    for (const sel of altAttrSelectors) {
+      for (const scope of [document.querySelectorAll(sel), deepQuerySelectorAll(sel)]) {
+        for (const el of scope) {
+          const lat = el.dataset?.lat || el.dataset?.latitude;
+          const lng = el.dataset?.lng || el.dataset?.lon || el.dataset?.longitude;
+          if (lat && lng) return { lat, lng, strategy: sel };
+        }
+      }
+    }
+
+    // 6 — last resort: scan the page's own HTML/inline JSON for a
+    // plausible lat/lng pair. Deliberately last and deliberately loose —
+    // only reached when every structural strategy above found nothing.
+    try {
+      const html = document.documentElement.outerHTML;
+      const m = html.match(/"lat(?:itude)?"\s*:\s*(-?\d{1,3}\.\d{3,})\s*,\s*"lng?(?:itude)?"\s*:\s*(-?\d{1,3}\.\d{3,})/i)
+             || html.match(/\[(-?\d{1,2}\.\d{4,}),\s*(-?\d{1,3}\.\d{4,})\]/);
+      if (m) {
+        const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+        if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+          return { lat: String(lat), lng: String(lng), strategy: 'regex-scan (last resort)' };
+        }
+      }
+    } catch {}
+
+    return { lat: null, lng: null, strategy: null };
+  });
 }
 
 // ─── Core browser launch (internal — called by initBrowserSingleton only) ────
@@ -533,17 +649,14 @@ async function clickDeviceByName(page, deviceName) {
   // Step 4: poll up to 20s — trackers are slower than phones
   for (let i = 0; i < 40; i++) {
     await page.waitForTimeout(500);
-    const coords = await page.evaluate(() => {
-      const el = document.querySelector('[data-location-lat]');
-      return el ? { lat: el.dataset.locationLat, lng: el.dataset.locationLng } : null;
-    });
+    const coords = await extractCoordinatesDeep(page);
     if (coords?.lat) {
-      logger.info(`  Coords after ${((i + 1) * 0.5).toFixed(1)}s: ${coords.lat}, ${coords.lng}`);
+      logger.info(`  Coords after ${((i + 1) * 0.5).toFixed(1)}s via [${coords.strategy}]: ${coords.lat}, ${coords.lng}`);
       return true;
     }
   }
 
-  logger.warn(`  No coords after 20s for "${deviceName}"`);
+  logger.warn(`  No coords after 20s for "${deviceName}" — every extraction strategy (light DOM, shadow-pierced, regex fallback) came back empty`);
   await saveDebugSnapshot(page, `no-coords-${deviceName.replace(/\s+/g, '-')}`);
   return true;
 }
@@ -551,42 +664,14 @@ async function clickDeviceByName(page, deviceName) {
 // ─── extractActiveDeviceData ──────────────────────────────────────────────────
 
 async function extractActiveDeviceData(page) {
-  return page.evaluate(() => {
-    let lat = null, lng = null;
+  const coords = await extractCoordinatesDeep(page);
+  if (coords.lat) {
+    logger.info(`  [extract] Coordinates via [${coords.strategy}]`);
+  } else {
+    logger.warn('  [extract] No coordinates found via any strategy (light DOM, shadow-pierced, regex fallback)');
+  }
 
-    const locEl = document.querySelector('[data-location-lat]');
-    if (locEl?.dataset?.locationLat) {
-      lat = locEl.dataset.locationLat;
-      lng = locEl.dataset.locationLng;
-    }
-
-    if (!lat) {
-      const active = document.querySelector('[data-active="true"]');
-      if (active?.dataset?.locationLat) {
-        lat = active.dataset.locationLat;
-        lng = active.dataset.locationLng;
-      }
-    }
-
-    if (!lat) {
-      const marker = document.querySelector('gmp-advanced-marker');
-      if (marker) {
-        const pos = marker.getAttribute('gmp-clickable-position');
-        if (pos?.includes(',')) [lat, lng] = pos.split(',').map(s => s.trim());
-        if (!lat && marker.position) {
-          try { lat = String(marker.position.lat()); lng = String(marker.position.lng()); } catch {}
-          if (!lat) {
-            const numKeys = Object.keys(marker.position)
-              .filter(k => typeof marker.position[k] === 'number' && Math.abs(marker.position[k]) <= 180);
-            if (numKeys.length >= 2) {
-              lat = String(marker.position[numKeys[0]]);
-              lng = String(marker.position[numKeys[1]]);
-            }
-          }
-        }
-      }
-    }
-
+  const rest = await page.evaluate(() => {
     let deviceName = null;
     for (const sel of ['.KaKp4c', '.Hj7hL', '[data-device-name]', 'h1', 'h2']) {
       const t = document.querySelector(sel)?.innerText?.trim();
@@ -624,8 +709,10 @@ async function extractActiveDeviceData(page) {
       if ((img.naturalWidth || img.width) > 40) { imageUrl = src; break; }
     }
 
-    return { lat, lng, deviceName, battery, network, lastSeen, imageUrl };
+    return { deviceName, battery, network, lastSeen, imageUrl };
   });
+
+  return { lat: coords.lat, lng: coords.lng, ...rest };
 }
 
 // ─── fetchAllDevices — main entry point called by fetchService ────────────────
