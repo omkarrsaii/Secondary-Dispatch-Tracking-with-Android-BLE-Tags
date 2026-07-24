@@ -269,12 +269,13 @@ router.get('/kpis/cluster/:name', (req, res) => {
 // ─── GET /api/hierarchy/kpis/asm/:name ────────────────────────────────────────
 // Performance KPIs for a single ASM: totalInvoices, activeInvoices,
 // completedInvoices, completionRate (%), overdueInvoices, distributorCount.
-// Query params: dateFrom, dateTo (Invoice Date), distributorCode.
+// Query params: dateFrom, dateTo (Invoice Date), distributorCode, hq (HQ/TSOE
+// within this ASM — ASM view only).
 
 router.get('/kpis/asm/:name', (req, res) => {
   try {
-    const { dateFrom, dateTo, distributorCode } = req.query;
-    const result = kpi.getKpisForAsm(req.params.name, { dateFrom, dateTo, distributorCode });
+    const { dateFrom, dateTo, distributorCode, hq } = req.query;
+    const result = kpi.getKpisForAsm(req.params.name, { dateFrom, dateTo, distributorCode, hq });
     if (!result) {
       return res.status(404).json({
         error:   'ASM_NOT_FOUND',
@@ -313,19 +314,19 @@ router.get('/kpis/tsoe/:name', (req, res) => {
 // Hierarchy-aware Invoice List — backs both the "Active Invoices" and
 // "All Invoices" views.
 // Query params: scope ('cluster'|'asm'|'tsoe'), name, dateFrom, dateTo,
-// distributorCode, invoiceState ('all'|'active'|'overdue'),
-// view ('active'|'all' — default 'active').
+// distributorCode, hq (HQ/TSOE within the ASM — ASM scope only),
+// invoiceState ('all'|'active'|'overdue'), view ('active'|'all' — default 'active').
 
 router.get('/invoices', async (req, res) => {
   try {
-    const { scope, name, dateFrom, dateTo, distributorCode, invoiceState, view } = req.query;
+    const { scope, name, dateFrom, dateTo, distributorCode, hq, invoiceState, view } = req.query;
     if (!scope || !name) {
       return res.status(400).json({ error: 'MISSING_PARAMS', message: '"scope" and "name" are required.' });
     }
     const rows = await kpi.getInvoiceList({
       scope,
       name,
-      filters: { dateFrom, dateTo, distributorCode, invoiceState },
+      filters: { dateFrom, dateTo, distributorCode, hq, invoiceState },
       view: view === 'all' ? 'all' : 'active',
     });
     if (rows === null) {

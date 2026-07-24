@@ -344,6 +344,7 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
   const [distributorFilter, setDistributorFilter] = useState('')
+  const [hqFilter, setHqFilter] = useState('')
   const [invoiceState, setInvoiceState] = useState('all')
   const [invoiceView, setInvoiceView] = useState('active') // 'active' | 'all'
   const [distributorOptions, setDistributorOptions] = useState([])
@@ -376,6 +377,10 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
 
   const asmOptions  = Array.from(new Set(asmsFlat.filter(a=>a.clusterName===selectedCluster).map(a=>a.asmArea))).sort()
   const tsoeOptions = Array.from(new Set(tsoesFlat.filter(t=>t.clusterName===selectedCluster).map(t=>t.tsoeName))).sort()
+  // HQ filter is ASM-view-only, and scoped to whichever ASM is currently
+  // selected — derived straight from distributorOptions (already fetched
+  // scoped to that ASM below) rather than a separate API call.
+  const hqOptions = level==='asm' ? Array.from(new Set(distributorOptions.map(d => d.tsoeName).filter(Boolean))).sort() : []
 
   useEffect(() => {
     if (level==='asm') setName(asmOptions[0]||'')
@@ -383,6 +388,11 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
     else setName('')
     setDistributorFilter('')
   }, [level, selectedCluster]) // eslint-disable-line
+
+  // Reset the HQ selection whenever the cluster, level, or the selected ASM
+  // itself changes — an HQ chosen under a previous ASM won't belong to the
+  // newly-selected one.
+  useEffect(() => { setHqFilter('') }, [level, selectedCluster, name])
 
   useEffect(() => {
     if (!selectedCluster) return
@@ -396,13 +406,13 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
     const scopeName = level==='cluster' ? selectedCluster : name
     if (!scopeName) { setKpis(null); setInvoices([]); return }
     setLoading(true); setError(null)
-    const fp = { dateFrom:dateFrom||undefined, dateTo:dateTo||undefined, distributorCode:distributorFilter||undefined }
+    const fp = { dateFrom:dateFrom||undefined, dateTo:dateTo||undefined, distributorCode:distributorFilter||undefined, hq: level==='asm' ? (hqFilter||undefined) : undefined }
     const kpiFetcher = level==='cluster' ? getClusterKpis(scopeName,fp) : level==='asm' ? getAsmKpis(scopeName,fp) : getTsoeKpis(scopeName,fp)
     Promise.all([kpiFetcher, getActiveInvoiceList({ scope:level, name:scopeName, ...fp, invoiceState, view:invoiceView })])
       .then(([k,list]) => { setKpis(k); setInvoices(list.invoices||[]) })
       .catch(e => setError(e.response?.data?.message || e.message))
       .finally(() => setLoading(false))
-  }, [level, selectedCluster, name, dateFrom, dateTo, distributorFilter, invoiceState, invoiceView, refreshTick])
+  }, [level, selectedCluster, name, dateFrom, dateTo, distributorFilter, hqFilter, invoiceState, invoiceView, refreshTick])
 
   const showAsmCol = level==='cluster', showHqCol = level==='cluster' || level==='asm'
 
@@ -452,13 +462,19 @@ function PerformancePanel({ clusters, asmsFlat, tsoesFlat }) {
             <option value="">All Distributors</option>
             {distributorOptions.map(d => <option key={d.distributorCode} value={d.distributorCode}>{d.distributorName||d.distributorCode}</option>)}
           </select>
+          {level==='asm' && (
+            <select value={hqFilter} onChange={e => setHqFilter(e.target.value)} className={`text-xs ${selectCls}`}>
+              <option value="">All HQs</option>
+              {hqOptions.map(hq => <option key={hq} value={hq}>{hq}</option>)}
+            </select>
+          )}
           <select value={invoiceState} onChange={e => setInvoiceState(e.target.value)} className={`text-xs ${selectCls}`}>
             <option value="all">All Active</option>
             <option value="active">On-Time Only</option>
             <option value="overdue">Overdue Only</option>
           </select>
-          {(dateFrom||dateTo||distributorFilter||invoiceState!=='all') && (
-            <button onClick={()=>{setDateFrom('');setDateTo('');setDistributorFilter('');setInvoiceState('all')}} className="text-xs text-m-muted hover:text-m-text underline">Clear</button>
+          {(dateFrom||dateTo||distributorFilter||hqFilter||invoiceState!=='all') && (
+            <button onClick={()=>{setDateFrom('');setDateTo('');setDistributorFilter('');setHqFilter('');setInvoiceState('all')}} className="text-xs text-m-muted hover:text-m-text underline">Clear</button>
           )}
         </div>
       </div>

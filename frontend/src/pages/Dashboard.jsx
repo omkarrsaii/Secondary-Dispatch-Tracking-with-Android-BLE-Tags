@@ -10,7 +10,7 @@ export default function Dashboard() {
   const { devices, status, loading, refreshing, refresh } = useDevices()
   const navigate = useNavigate()
 
-  const onlineDevices = devices.filter(d => d.lastSeen?.match(/minute|just now|second/i))
+  const onlineDevices = devices.filter(d => d.status === 'Active')
   const lastSync = status?.lastSync ? new Date(status.lastSync).toLocaleTimeString() : 'Never'
 
   return (

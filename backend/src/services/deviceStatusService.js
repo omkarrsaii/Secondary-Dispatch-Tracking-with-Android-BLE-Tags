@@ -8,20 +8,18 @@
  *               mappingService's vehicleNo → deviceName map), or null when
  *               the tag isn't assigned to any vehicle.
  *
- *   status    — 'Active' when the tag is BOTH (a) outside the depot's
- *               geofence radius and (b) has reported within the last hour;
- *               'Inactive' otherwise (at/near the depot, stale last-seen
- *               data, unparseable last-seen text, or no coordinates at
- *               all — anything short of confirmed "out and recently seen"
- *               defaults to Inactive rather than guessing).
+ *   status    — computed in strict priority order:
+ *                 1. Not assigned to any vehicle           → Inactive (always,
+ *                    regardless of location or last-seen — checked FIRST and
+ *                    short-circuits everything below)
+ *                 2. Last seen more than 1 hour ago         → Inactive
+ *                 3. Within the depot's 1 km geofence radius → Inactive
+ *                 4. Assigned + seen within the last hour + outside the
+ *                    depot radius, all three                → Active
  *
- * Deliberately independent of vehicle assignment — an unassigned tag still
- * gets a real Active/Inactive reading from its own coordinates, it just
- * shows "Not Assigned" for Vehicle No.
- *
- * Used by both routes/api.js (GET /api/devices, the table on the Devices
- * page) and exportService.js (CSV/Excel) so the on-screen table and the
- * exported files can never disagree with each other.
+ * Used by GET /api/devices (Devices page + Dashboard), exportService.js
+ * (CSV/Excel), and anywhere else a device's status is shown, so none of
+ * them can ever disagree with each other.
  */
 
 const mapping  = require('./mappingService');
@@ -54,16 +52,24 @@ function computeDeviceVehicleAndStatus(device, deviceToVehicle, now = new Date()
   const name      = String(device.device_name || device.name || '').trim();
   const vehicleNo = deviceToVehicle.get(name) || null;
 
+  // Rule 1 — highest priority, checked before anything else: an unassigned
+  // tag is ALWAYS Inactive, no matter where it is or when it was last seen.
+  if (!vehicleNo) {
+    return { vehicleNo: null, status: 'Inactive' };
+  }
+
+  // Rules 2–4: only reachable once we know a vehicle is assigned.
   let status = 'Inactive';
   if (device.latitude != null && device.longitude != null && device.latitude !== '' && device.longitude !== '') {
     const distanceMeters = getDistanceInKm(
       parseFloat(device.latitude), parseFloat(device.longitude), HUB_LAT, HUB_LON
     ) * 1000;
-    const outsideDepotRadius = distanceMeters > geofence.HUB_RADIUS_METERS;
+    const outsideDepotRadius = distanceMeters > geofence.HUB_RADIUS_METERS;   // Rule 3 (inverse)
 
-    const minutesAgo    = getMinutesSinceLastSeen(device.last_seen_text || device.lastSeen, now);
-    const recentlySeen  = minutesAgo != null && minutesAgo <= RECENT_WINDOW_MINUTES;
+    const minutesAgo   = getMinutesSinceLastSeen(device.last_seen_text || device.lastSeen, now);
+    const recentlySeen = minutesAgo != null && minutesAgo <= RECENT_WINDOW_MINUTES; // Rule 2 (inverse)
 
+    // Rule 4 — Active only when every condition holds at once.
     status = (outsideDepotRadius && recentlySeen) ? 'Active' : 'Inactive';
   }
 

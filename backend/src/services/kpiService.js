@@ -123,6 +123,24 @@ function buildKpisForDistributorCodes(distributorCodes, filters = {}) {
   };
 }
 
+/**
+ * An ASM Area's distributor codes, optionally narrowed to a single HQ
+ * (TSOE) within that ASM — the basis for the new HQ filter (ASM view
+ * only). Without `hq`, returns every distributor under the ASM (same as
+ * before the filter existed).
+ */
+function resolveAsmDistributorCodes(asmArea, hq) {
+  const name = String(asmArea || '').trim();
+  if (!hq) {
+    const asm = md.getAllAsms().find(a => a.asmArea === name);
+    return asm ? asm.distributors : null;
+  }
+  const hqName = String(hq).trim();
+  return md.getAllDistributors()
+    .filter(d => d.asmArea === name && d.tsoeName === hqName)
+    .map(d => d.distributorCode);
+}
+
 /** KPIs for a single ASM Area (the stable territory key after Change 1). */
 function getKpisForAsm(asmArea, filters = {}) {
   const name = String(asmArea || '').trim();
@@ -131,11 +149,12 @@ function getKpisForAsm(asmArea, filters = {}) {
     logger.warn(`kpiService: no ASM Area found matching "${name}"`);
     return null;
   }
+  const codes = filters.hq ? resolveAsmDistributorCodes(name, filters.hq) : asm.distributors;
   return {
     asmArea:  asm.asmArea,
     asmNames: asm.asmNames,   // array of person-names who hold/held this area
     region:   asm.region,
-    ...buildKpisForDistributorCodes(asm.distributors, filters),
+    ...buildKpisForDistributorCodes(codes, filters),
   };
 }
 
@@ -388,9 +407,11 @@ function groupAndOrderByVehicleAndDate(rows) {
  * "All Invoices" views.
  *
  * scope: 'cluster' | 'asm' | 'tsoe', name: the cluster/ASM/TSOE name.
- * filters: { dateFrom, dateTo, distributorCode, invoiceState }
+ * filters: { dateFrom, dateTo, distributorCode, invoiceState, hq }
  *   - dateFrom/dateTo/distributorCode narrow the SAME base set the KPI
  *     cards use, so the two stay consistent with each other.
+ *   - hq (ASM scope only) narrows to one HQ/TSOE within the selected ASM —
+ *     ignored for cluster/tsoe scope, same as the KPI cards.
  *   - invoiceState ('all' | 'active' | 'overdue') is a sub-filter (based
  *     on Appointment Date vs today) that applies identically in both
  *     views, never to the KPI cards above it.
@@ -415,8 +436,9 @@ async function getInvoiceList({ scope, name, filters = {}, view = 'active' }) {
   if (scope === 'cluster') {
     codes = md.getDistributorCodesForCluster(name);
   } else if (scope === 'asm') {
-    const asm = md.getAllAsms().find(a => a.asmArea === String(name || '').trim());   // ← Change 1
-    codes = asm ? asm.distributors : null;
+    const asmName = String(name || '').trim();
+    codes = filters.hq ? resolveAsmDistributorCodes(asmName, filters.hq)
+                        : (md.getAllAsms().find(a => a.asmArea === asmName)?.distributors || null);   // ← Change 1
   } else if (scope === 'tsoe') {
     const tsoe = md.getAllTsoes().find(t => t.tsoeName === String(name || '').trim());
     codes = tsoe ? tsoe.distributors : null;
